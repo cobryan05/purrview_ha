@@ -1,0 +1,16 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "token": "Access token (optional)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect"
+    }
+  }
+}
