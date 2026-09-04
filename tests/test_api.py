@@ -1,0 +1,149 @@
+"""PurrViewClient: the thin JSON wrapper WP-4's media_source and services build on.
+
+aioclient_mock intercepts calls the same way test_config_flow.py's reachability check
+does - no real PurrView instance, matching this integration's existing test style.
+"""
+
+from custom_components.purrview.api import PurrViewApiError, PurrViewClient
+
+HOST = "192.168.1.50"
+PORT = 7999
+BASE = f"http://{HOST}:{PORT}"
+
+
+def _client(hass, token=None):
+    return PurrViewClient(hass, host=HOST, port=PORT, token=token)
+
+
+class TestAuthHeaders:
+    async def test_no_token_sends_no_authorization_header(self, hass, aioclient_mock):
+        aioclient_mock.get(f"{BASE}/api/watch-events/facets", json={"status": "success"})
+
+        await _client(hass).get_facets()
+
+        _, _, _, headers = aioclient_mock.mock_calls[-1]
+        assert "Authorization" not in headers
+
+    async def test_token_is_sent_as_a_bearer_header(self, hass, aioclient_mock):
+        aioclient_mock.get(f"{BASE}/api/watch-events/facets", json={"status": "success"})
+
+        await _client(hass, token="s3cr3t").get_facets()
+
+        _, _, _, headers = aioclient_mock.mock_calls[-1]
+        assert headers["Authorization"] == "Bearer s3cr3t"
+
+
+class TestFacets:
+    async def test_missing_facet_groups_default_to_empty_lists(self, hass, aioclient_mock):
+        """PurrView's WatchEventFacetsResponse always includes all four - this is about
+        not crashing media_source's tree-building against a response some future
+        PurrView version trims, not a case that happens today."""
+        aioclient_mock.get(f"{BASE}/api/watch-events/facets", json={"status": "success", "rules": [{"ref": "r1", "name": "Front door"}]})
+
+        facets = await _client(hass).get_facets()
+
+        assert facets["rules"] == [{"ref": "r1", "name": "Front door"}]
+        assert facets["subjects"] == []
+        assert facets["targets"] == []
+        assert facets["sources"] == []
+
+
+class TestListEvents:
+    async def test_limit_and_offset_are_passed_through_as_query_params(self, hass, aioclient_mock):
+        aioclient_mock.get(f"{BASE}/api/watch-events", json={"status": "success", "events": [], "total": 0})
+
+        await _client(hass).list_events(limit=50, offset=100, source_uuid="src-1")
+
+        _, url, _, _ = aioclient_mock.mock_calls[-1]
+        assert url.query["limit"] == "50"
+        assert url.query["offset"] == "100"
+        assert url.query["source_uuid"] == "src-1"
+
+    async def test_none_filters_are_dropped_not_sent_as_the_string_none(self, hass, aioclient_mock):
+        """A caller building filters from optional UI state (e.g. no camera selected)
+        passes None for the ones that are not set - those must not become a literal
+        `?rule_uuid=None` PurrView would try to match against."""
+        aioclient_mock.get(f"{BASE}/api/watch-events", json={"status": "success", "events": [], "total": 0})
+
+        await _client(hass).list_events(rule_uuid=None, source_uuid="src-1")
+
+        _, url, _, _ = aioclient_mock.mock_calls[-1]
+        assert "rule_uuid" not in url.query
+        assert url.query["source_uuid"] == "src-1"
+
+    async def test_returns_events_and_total(self, hass, aioclient_mock):
+        aioclient_mock.get(
+            f"{BASE}/api/watch-events",
+            json={"status": "success", "events": [{"uuid": "e1"}], "total": 42},
+        )
+
+        events, total = await _client(hass).list_events()
+
+        assert events == [{"uuid": "e1"}]
+        assert total == 42
+
+
+class TestFailureEnvelope:
+    async def test_a_status_failure_body_raises_even_with_http_200(self, hass, aioclient_mock):
+        """PurrView reports a rejected request in the JSON body, not the status code -
+        the conditional that matters is that a 200 does not silently read as success."""
+        aioclient_mock.get(
+            f"{BASE}/api/watch-events/facets",
+            json={"status": "failure", "message": "db unavailable"},
+        )
+
+        try:
+            await _client(hass).get_facets()
+        except PurrViewApiError as err:
+            assert "db unavailable" in str(err)
+        else:
+            raise AssertionError("expected PurrViewApiError")
+
+
+class TestFlagEvent:
+    async def test_reason_and_note_land_under_metadata_flag(self, hass, aioclient_mock):
+        aioclient_mock.get(
+            f"{BASE}/api/watch-events/e1",
+            json={"status": "success", "event": {"uuid": "e1", "metadataJson": {}}},
+        )
+        aioclient_mock.patch(f"{BASE}/api/watch-events/e1", json={"status": "success"})
+
+        await _client(hass).flag_event("e1", reason="wrong_labels", note="not a cat")
+
+        _, _, data, _ = aioclient_mock.mock_calls[-1]
+        assert data["reviewState"] == "flagged"
+        assert data["metadataJson"]["flag"] == {
+            "reason": "wrong_labels",
+            "note": "not a cat",
+            "source": "home_assistant",
+        }
+
+    async def test_existing_metadata_is_preserved_not_overwritten(self, hass, aioclient_mock):
+        """The regression this test exists for: a bare PATCH carrying only metadataJson
+        replaces the whole column server-side. Flagging an event that already has other
+        metadata (e.g. a prior blip note) must not erase it."""
+        aioclient_mock.get(
+            f"{BASE}/api/watch-events/e1",
+            json={
+                "status": "success",
+                "event": {"uuid": "e1", "metadataJson": {"other_field": "keep me"}},
+            },
+        )
+        aioclient_mock.patch(f"{BASE}/api/watch-events/e1", json={"status": "success"})
+
+        await _client(hass).flag_event("e1", reason="wrong_labels")
+
+        _, _, data, _ = aioclient_mock.mock_calls[-1]
+        assert data["metadataJson"]["other_field"] == "keep me"
+        assert data["metadataJson"]["flag"]["reason"] == "wrong_labels"
+
+    async def test_missing_event_still_flags_with_empty_prior_metadata(self, hass, aioclient_mock):
+        """get_event returns None on a 404 (or any failure envelope) - flagging must not
+        crash on a race where the event was deleted between listing and flagging it."""
+        aioclient_mock.get(f"{BASE}/api/watch-events/e1", json={"status": "failure", "message": "not found"})
+        aioclient_mock.patch(f"{BASE}/api/watch-events/e1", json={"status": "success"})
+
+        await _client(hass).flag_event("e1", reason="wrong_labels")
+
+        _, _, data, _ = aioclient_mock.mock_calls[-1]
+        assert data["metadataJson"] == {"flag": {"reason": "wrong_labels", "note": "", "source": "home_assistant"}}
