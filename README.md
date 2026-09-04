@@ -2,8 +2,8 @@
 
 A HACS integration that brings [PurrView](../whiskerwatcher) stats, live camera
 views, and recorded events into Home Assistant. The Lovelace overlay card ships from
-inside this same integration rather than as a separate HACS plugin (see
-`custom_components/purrview/www/` once WP-5 lands).
+inside this same integration rather than as a separate HACS plugin — see
+`custom_components/purrview/www/`.
 
 Design rationale and the full work breakdown live in the main PurrView repo, not here:
 
@@ -19,7 +19,17 @@ that plan. Component A (the MQTT bridge) lives in the main PurrView repo itself.
 (`proxy.py`, `Range`/`206`-aware, streams recordings/snapshots/crops through HA), the
 PurrView API client (`api.py`), the `media_source` browse tree (`media_source.py` - By
 camera / By subject / By type / Recent, down to individual events), and the
-`purrview.flag_event` service (`services.py`). Still open: the Lovelace card (WP-5).
+`purrview.flag_event` service (`services.py`).
+
+**WP-5's live view (steps 1-3) is also built**: `www/purrview-card.js` +
+`www/purrview-overlay.js` (a Lovelace card polling `PurrViewLivePreviewView`, drawing
+the frame plus a toggleable detections/tracks/zones/labels overlay), backed by
+`PurrViewClient.get_live_preview`/`get_running_watcher_tasks` and
+`PurrViewLivePreviewView` (`live_preview.py`) resolving a watch profile to its current
+task server-side. Verified against a real running watcher on `purrview_mono_dev` via a
+disposable HA instance driven by Playwright - not just written and hoped-for. Still
+open: WP-5's filter mode (steps 4-7) - much of its goal is already covered by WP-4's
+`media_source` browser, so what's left is narrower than originally scoped.
 
 On the main app side, WP-1 (flag backend), WP-2 (MQTT bridge + discovery, since widened
 well past its original spec), WP-3 (auth token, widened into an optional web-UI login
@@ -39,7 +49,11 @@ pip install -r requirements_test.txt
 pytest tests/
 ```
 
-Verified working as of this writing (`python:3.14-slim`, 49 tests green).
+Verified working as of this writing (`python:3.14-slim`, 69 tests green). The card's
+own JS has no test suite (it's outside both PurrView's and this repo's test harnesses,
+per `HA_INTEGRATION_PLAN.md`'s testing policy) - it's been verified by hand against a
+disposable Home Assistant instance instead; see `HA_INTEGRATION_PLAN.md` WP-5 for what
+that covered.
 
 ## Before publishing
 
