@@ -16,8 +16,6 @@ layer down, for HA's own long-lived token instead of PurrView's (WP-3).
 
 from __future__ import annotations
 
-import logging
-
 import aiohttp
 from aiohttp import web
 from homeassistant.components.http import HomeAssistantView
@@ -25,8 +23,6 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import DOMAIN
-
-_LOGGER = logging.getLogger(__name__)
 
 #: Maps this view's `kind` segment to the PurrView endpoint it forwards to. Deliberately
 #: an allowlist, not a passthrough of an arbitrary path - this view is reachable with a

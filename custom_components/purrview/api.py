@@ -15,6 +15,8 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
+from .const import DOMAIN
+
 
 def _query_params(filters: dict[str, Any]) -> dict[str, Any]:
     """Drop unset filters and stringify datetimes.
@@ -133,3 +135,16 @@ class PurrViewClient:
             f"/api/watch-events/{event_uuid}",
             json={"reviewState": "flagged", "metadataJson": metadata},
         )
+
+
+def configured_clients(hass: HomeAssistant) -> dict[str, PurrViewClient]:
+    """Every configured PurrView instance, keyed by config entry id.
+
+    Shared by __init__.py, services.py and media_source.py rather than each
+    filtering hass.data[DOMAIN] itself - that dict also carries __init__.py's
+    "_view_registered" sentinel (not a real entry_id, see its own comment), and
+    only this one place should have to know that isinstance check is why.
+    """
+    return {
+        entry_id: client for entry_id, client in hass.data.get(DOMAIN, {}).items() if isinstance(client, PurrViewClient)
+    }

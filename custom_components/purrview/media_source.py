@@ -25,7 +25,6 @@ every level that needs it, not passed down from whoever listed it first.
 
 from __future__ import annotations
 
-import logging
 from collections import defaultdict
 from datetime import timedelta
 
@@ -40,10 +39,8 @@ from homeassistant.components.media_source.error import Unresolvable
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from .api import PurrViewApiError, PurrViewClient
+from .api import PurrViewApiError, PurrViewClient, configured_clients
 from .const import DOMAIN
-
-_LOGGER = logging.getLogger(__name__)
 
 #: How far back "Recent" and the Day-level history search look. PurrView's histogram
 #: endpoint reports its own bucket resolution rather than truncating for a wide range
@@ -76,15 +73,8 @@ class PurrViewMediaSource(MediaSource):
         super().__init__(DOMAIN)
         self.hass = hass
 
-    def _entries(self) -> dict[str, PurrViewClient]:
-        return {
-            entry_id: client
-            for entry_id, client in self.hass.data.get(DOMAIN, {}).items()
-            if isinstance(client, PurrViewClient)
-        }
-
     def _client(self, entry_id: str) -> PurrViewClient:
-        client = self._entries().get(entry_id)
+        client = configured_clients(self.hass).get(entry_id)
         if client is None:
             raise Unresolvable(f"Unknown PurrView config entry '{entry_id}'")
         return client
@@ -95,7 +85,7 @@ class PurrViewMediaSource(MediaSource):
         parts = item.identifier.split("/") if item.identifier else []
 
         if not parts:
-            entries = self._entries()
+            entries = configured_clients(self.hass)
             if not entries:
                 raise Unresolvable("No PurrView instance is configured")
             if len(entries) == 1:
