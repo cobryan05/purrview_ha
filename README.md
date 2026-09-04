@@ -15,11 +15,11 @@ that plan. Component A (the MQTT bridge) lives in the main PurrView repo itself.
 
 ## Status
 
-WP-4 (this repo's own work): config flow, the media proxy view (`proxy.py`,
-`Range`/`206`-aware, streams recordings/snapshots/crops through HA), the PurrView API
-client (`api.py`), and the `media_source` browse tree (`media_source.py` - By camera /
-By subject / By type / Recent, down to individual events) are all in and tested. Still
-open: the `purrview.flag_event` service (WP-4 step 4) and the Lovelace card (WP-5).
+**WP-4 is fully built** (this repo's own work): config flow, the media proxy view
+(`proxy.py`, `Range`/`206`-aware, streams recordings/snapshots/crops through HA), the
+PurrView API client (`api.py`), the `media_source` browse tree (`media_source.py` - By
+camera / By subject / By type / Recent, down to individual events), and the
+`purrview.flag_event` service (`services.py`). Still open: the Lovelace card (WP-5).
 
 On the main app side, WP-1 (flag backend), WP-2 (MQTT bridge + discovery, since widened
 well past its original spec), WP-3 (auth token, widened into an optional web-UI login
@@ -39,7 +39,7 @@ pip install -r requirements_test.txt
 pytest tests/
 ```
 
-Verified working as of this writing (`python:3.14-slim`, 36 tests green).
+Verified working as of this writing (`python:3.14-slim`, 49 tests green).
 
 ## Before publishing
 
