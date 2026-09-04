@@ -99,9 +99,9 @@ class TestDimensionLevels:
             json={
                 "status": "success",
                 "groups": [
-                    {"source_uuid": "src-1", "rule_uuid": "r1", "count": 3},
-                    {"source_uuid": "src-1", "rule_uuid": "r2", "count": 2},
-                    {"source_uuid": "src-2", "rule_uuid": "r1", "count": 1},
+                    {"sourceUuid": "src-1", "ruleUuid": "r1", "count": 3},
+                    {"sourceUuid": "src-1", "ruleUuid": "r2", "count": 2},
+                    {"sourceUuid": "src-2", "ruleUuid": "r1", "count": 1},
                 ],
             },
         )
@@ -127,7 +127,7 @@ class TestDimensionLevels:
         not crash."""
         aioclient_mock.get(
             f"{BASE}/api/watch-events/groups",
-            json={"status": "success", "groups": [{"source_uuid": "src-9", "rule_uuid": "r1", "count": 1}]},
+            json={"status": "success", "groups": [{"sourceUuid": "src-9", "ruleUuid": "r1", "count": 1}]},
         )
         aioclient_mock.get(f"{BASE}/api/watch-events/facets", json={"status": "success", "sources": []})
         source, item = _browse(hass, f"{ENTRY_ID}/by_camera")
@@ -139,7 +139,7 @@ class TestDimensionLevels:
     async def test_level_3_filters_by_the_level_2_selection(self, hass, aioclient_mock):
         aioclient_mock.get(
             f"{BASE}/api/watch-events/groups",
-            json={"status": "success", "groups": [{"source_uuid": "src-1", "rule_uuid": "r1", "count": 4}]},
+            json={"status": "success", "groups": [{"sourceUuid": "src-1", "ruleUuid": "r1", "count": 4}]},
         )
         aioclient_mock.get(
             f"{BASE}/api/watch-events/facets",
@@ -169,9 +169,9 @@ class TestDayLevel:
                 "status": "success",
                 "bucket": "hour",
                 "buckets": [
-                    {"bucket_start": "2026-06-15T18:00:00", "count": 3},
-                    {"bucket_start": "2026-06-15T19:00:00", "count": 2},
-                    {"bucket_start": "2026-06-14T18:00:00", "count": 1},
+                    {"bucketStart": "2026-06-15T18:00:00", "count": 3},
+                    {"bucketStart": "2026-06-15T19:00:00", "count": 2},
+                    {"bucketStart": "2026-06-14T18:00:00", "count": 1},
                 ],
             },
         )

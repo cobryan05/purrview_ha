@@ -58,6 +58,15 @@ _GROUPINGS: dict[str, tuple[str, str]] = {
 _GROUPING_TITLES = {"by_camera": "By camera", "by_subject": "By subject", "by_type": "By type"}
 #: Which facets() list carries a field's {ref, name} pairs.
 _FACET_KEY_FOR_FIELD = {"source_uuid": "sources", "rule_uuid": "rules", "subject_ref": "subjects"}
+#: A field's own name is what PurrView's query params use (WatchEventQuery's __init__
+#: params are read as literal, un-aliased FastAPI query params - snake_case, verified
+#: against the real API). But WatchEventGroup/WatchEventHistogramBucket are Pydantic
+#: response models with alias_generator=to_camel, so *reading a row back* needs the
+#: camelCase wire name instead - confirmed live against real event data after an
+#: all-camelCase assumption in the query-building code silently leaked into reading
+#: responses too, and this repo's own mock-fixture tests didn't catch it because the
+#: fixtures shared the same wrong assumption.
+_RESPONSE_KEY_FOR_FIELD = {"source_uuid": "sourceUuid", "rule_uuid": "ruleUuid", "subject_ref": "subjectRef"}
 
 
 async def async_get_media_source(hass: HomeAssistant) -> PurrViewMediaSource:
@@ -157,9 +166,10 @@ class PurrViewMediaSource(MediaSource):
         folder, the same reasoning PurrView's own facets endpoint documents.
         """
         groups = await client.list_groups(**(base_filters or {}))
+        response_key = _RESPONSE_KEY_FOR_FIELD[field]
         counts: dict[str, int] = defaultdict(int)
         for row in groups:
-            value = row.get(field)
+            value = row.get(response_key)
             if value:
                 counts[value] += row.get("count", 0)
 
@@ -179,10 +189,10 @@ class PurrViewMediaSource(MediaSource):
 
         counts: dict[str, int] = defaultdict(int)
         for bucket in buckets:
-            started = dt_util.parse_datetime(bucket["bucket_start"])
+            started = dt_util.parse_datetime(bucket["bucketStart"])
             if started is None:
                 continue
-            # bucket_start carries no offset (PurrView stores it as UTC-naive) - told so
+            # bucketStart carries no offset (PurrView stores it as UTC-naive) - told so
             # explicitly before as_local can mean anything. Composed from UTC *hour*
             # buckets rather than trusting PurrView's own day buckets: bucket resolution
             # can silently coarsen from hour to day server-side for a wide filter (see
