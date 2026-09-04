@@ -1,10 +1,10 @@
 """The PurrView integration.
 
-WP-4: the proxy view (media streamed through HA, auth and all), a `PurrViewClient`
-per config entry, and the `purrview.flag_event` service. media_source (media_source.py)
-builds on the client this stores too, but is auto-discovered by HA's own platform
-loader rather than wired in here. See HA_INTEGRATION_PLAN.md in the main PurrView
-repo for the full build order.
+WP-4: the media proxy view and the live-preview view (both streamed through HA, auth
+and all), a `PurrViewClient` per config entry, and the `purrview.flag_event` service.
+media_source (media_source.py) builds on the client this stores too, but is
+auto-discovered by HA's own platform loader rather than wired in here. See
+HA_INTEGRATION_PLAN.md in the main PurrView repo for the full build order.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ from homeassistant.core import HomeAssistant
 
 from .api import PurrViewClient, configured_clients
 from .const import CONF_TOKEN, DOMAIN
+from .live_preview import PurrViewLivePreviewView
 from .proxy import PurrViewMediaProxyView
 from .services import SERVICE_FLAG_EVENT, async_register_services
 
@@ -33,11 +34,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         token=entry.data.get(CONF_TOKEN),
     )
 
-    # Registered once, not per-entry: the view itself resolves which PurrView instance
-    # to forward to from the entry_id in the URL, so a second entry needs a new client
+    # Registered once, not per-entry: both views resolve which PurrView instance to
+    # forward to from the entry_id in the URL, so a second entry needs a new client
     # in the dict above, not a second route.
     if not domain_data.get(_VIEW_REGISTERED_KEY):
         hass.http.register_view(PurrViewMediaProxyView(hass))
+        hass.http.register_view(PurrViewLivePreviewView(hass))
         domain_data[_VIEW_REGISTERED_KEY] = True
 
     # Re-registering on every entry is harmless (see async_register_services), so

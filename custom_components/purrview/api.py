@@ -33,6 +33,15 @@ class PurrViewApiError(Exception):
     """PurrView was reached, but answered with status == "failure"."""
 
 
+#: What get_running_watcher_tasks filters task-instance listings down to. Mirrors
+#: the app's own NVR pane (see WATCHER_TYPENAME / LIVE_STATUSES in
+#: apps/image_tagging_server/static/js/app/nvr/main.js) - a stopped watcher's
+#: instance row is retained after it stops, so status has to be checked too, not
+#: just typename.
+_WATCHER_TYPENAME = "StreamWatcherTask"
+_LIVE_STATUSES = frozenset({"running", "pending", "paused"})
+
+
 class PurrViewClient:
     """Talks to one PurrView instance's HTTP API (image_tagging_server, port 7999 by default)."""
 
@@ -135,6 +144,60 @@ class PurrViewClient:
             f"/api/watch-events/{event_uuid}",
             json={"reviewState": "flagged", "metadataJson": metadata},
         )
+
+    async def get_running_watcher_tasks(self) -> list[dict[str, str]]:
+        """Every running watcher, as `[{"taskUuid": ..., "profileUuid": ...}]`.
+
+        There is no "list running watchers" endpoint - `POST /api/tasks/instances/get`
+        with no `taskUuids` returns every task instance, and this filters it exactly
+        the way the app's own NVR pane does client-side (fetchRunningWatchers in
+        main.js): by typename, then by an in-progress instance status, since a
+        stopped watcher's instance row is retained rather than deleted.
+
+        A profile's uuid lives at `config.params.watch_profile_uuid` - snake_case,
+        unlike every *declared* field on this response, because `params` is an
+        opaque `Dict[str, Any]` on the PurrView side (whatever the task itself wrote),
+        never run through the `to_camel` aliasing that field names above it get.
+        """
+        data = await self._request_json("POST", "/api/tasks/instances/get", json={})
+        running: list[dict[str, str]] = []
+        for task_uuid, info in data.get("tasks", {}).items():
+            config = info.get("config") or {}
+            instance = info.get("instance") or {}
+            if config.get("typename") != _WATCHER_TYPENAME:
+                continue
+            if instance.get("status") not in _LIVE_STATUSES:
+                continue
+            profile_uuid = (config.get("params") or {}).get("watch_profile_uuid")
+            if profile_uuid:
+                running.append({"taskUuid": task_uuid, "profileUuid": profile_uuid})
+        return running
+
+    async def get_live_preview(
+        self,
+        *,
+        profile_uuid: str,
+        source_uuid: str | None = None,
+        since_seq: int | None = None,
+        quality: int | None = None,
+        full: bool = False,
+    ) -> dict[str, Any] | None:
+        """The running watcher's current frame plus what it sees in it.
+
+        None when that profile isn't currently running - a normal answer, not an
+        error, mirroring `fetchTaskLivePreview`'s own contract on the PurrView side
+        (a stopped watcher and a profile that was never a watcher look the same).
+        """
+        tasks = await self.get_running_watcher_tasks()
+        match = next((t for t in tasks if t["profileUuid"] == profile_uuid), None)
+        if match is None:
+            return None
+
+        params = _query_params({"source_uuid": source_uuid, "since_seq": since_seq, "quality": quality})
+        if full:
+            params["full"] = "true"
+        data = await self._request_json("GET", f"/api/tasks/instances/{match['taskUuid']}/live-preview", params=params)
+        return data.get("preview")
 
 
 def configured_clients(hass: HomeAssistant) -> dict[str, PurrViewClient]:
