@@ -15,27 +15,31 @@ that plan. Component A (the MQTT bridge) lives in the main PurrView repo itself.
 
 ## Status
 
-Scaffolding only, on this side. Config flow (host/port/token, WP-4 step 1) is in place
-and tested. Everything else here - media_source, the proxy view, the flag service, the
-card - is not built yet.
+WP-4 (this repo's own work): config flow, the media proxy view (`proxy.py`,
+`Range`/`206`-aware, streams recordings/snapshots/crops through HA), the PurrView API
+client (`api.py`), and the `media_source` browse tree (`media_source.py` - By camera /
+By subject / By type / Recent, down to individual events) are all in and tested. Still
+open: the `purrview.flag_event` service (WP-4 step 4) and the Lovelace card (WP-5).
 
 On the main app side, WP-1 (flag backend), WP-2 (MQTT bridge + discovery, since widened
-well past its original spec), and WP-6 (per-rule HA opt-out) are done. WP-3 (auth
-token) is not built yet and blocks WP-4's proxy view. See `HA_INTEGRATION_PLAN.md` for
+well past its original spec), WP-3 (auth token, widened into an optional web-UI login
+too), and WP-6 (per-rule HA opt-out) are all done. See `HA_INTEGRATION_PLAN.md` for
 current status on every work package.
 
 ## Development
 
 Targets Home Assistant 2026.8+. `pytest-homeassistant-custom-component` 0.13.342 (the
 version pinned below) requires **Python 3.14** — that's what pulled it in, not a choice
-made independently of HA's own version support.
+made independently of HA's own version support. It resolves to HA core 2026.7.0b2, a
+beta of an earlier minor than the "2026.8+" target above — worth reverifying against a
+2026.8 release before relying on any API surface used here that's new since 2026.7.
 
 ```bash
 pip install -r requirements_test.txt
 pytest tests/
 ```
 
-Verified working as of this writing (`python:3.14-slim`, both config flow tests green).
+Verified working as of this writing (`python:3.14-slim`, 36 tests green).
 
 ## Before publishing
 

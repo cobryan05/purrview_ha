@@ -38,7 +38,10 @@ class TestFacets:
         """PurrView's WatchEventFacetsResponse always includes all four - this is about
         not crashing media_source's tree-building against a response some future
         PurrView version trims, not a case that happens today."""
-        aioclient_mock.get(f"{BASE}/api/watch-events/facets", json={"status": "success", "rules": [{"ref": "r1", "name": "Front door"}]})
+        aioclient_mock.get(
+            f"{BASE}/api/watch-events/facets",
+            json={"status": "success", "rules": [{"ref": "r1", "name": "Front door"}]},
+        )
 
         facets = await _client(hass).get_facets()
 

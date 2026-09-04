@@ -71,7 +71,9 @@ class TestForwarding:
 
     async def test_no_range_header_means_none_is_sent_upstream(self, hass, hass_client, aioclient_mock):
         await _register(hass)
-        aioclient_mock.get(f"{BASE}/api/recordings/r1/file", content=b"all of it", headers={"Content-Type": "video/mp4"})
+        aioclient_mock.get(
+            f"{BASE}/api/recordings/r1/file", content=b"all of it", headers={"Content-Type": "video/mp4"}
+        )
         client = await hass_client()
 
         await client.get("/api/purrview/entry-1/recording/r1")

@@ -9,10 +9,22 @@ element needs the response streamed and Range-aware, not decoded as JSON.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+
+def _query_params(filters: dict[str, Any]) -> dict[str, Any]:
+    """Drop unset filters and stringify datetimes.
+
+    aiohttp would otherwise str() a datetime as "2026-09-04 12:00:00+00:00" - valid to
+    Python, but not the canonical isoformat FastAPI's own parsing is guaranteed to
+    accept. None values are dropped rather than sent as the literal string "None",
+    which is how an optional UI filter (e.g. "any camera") gets composed here.
+    """
+    return {k: (v.isoformat() if isinstance(v, datetime) else v) for k, v in filters.items() if v is not None}
 
 
 class PurrViewApiError(Exception):
@@ -70,11 +82,34 @@ class PurrViewClient:
         `rule_uuid`, `start_from`, ...) - passed straight through as query params so
         this file does not have to know every filter PurrView adds in the future.
         """
-        params: dict[str, Any] = {k: v for k, v in filters.items() if v is not None}
+        params = _query_params(filters)
         params["limit"] = limit
         params["offset"] = offset
         data = await self._request_json("GET", "/api/watch-events", params=params)
         return data.get("events", []), data.get("total", 0)
+
+    async def list_groups(self, **filters: Any) -> list[dict]:
+        """Distinct (rule, subject, target, source) combinations matching `filters`,
+        each with its own count - the building block for every intermediate level of
+        the media_source tree (e.g. "which rules has this camera actually fired",
+        derived from history, not from every rule that exists).
+        """
+        data = await self._request_json("GET", "/api/watch-events/groups", params=_query_params(filters))
+        return data.get("groups", [])
+
+    async def histogram(self, *, bucket: str = "hour", **filters: Any) -> tuple[str, list[dict]]:
+        """Event counts per UTC time bucket, for rolling into local-day tree nodes.
+
+        Returns the *actual* bucket resolution used, not necessarily the one asked for:
+        PurrView coarsens `hour` to `day` itself for a very wide filter, rather than
+        silently truncating - see WatchEventHistogramResponse.bucket. A caller doing its
+        own local-day rollup has to know when that already happened UTC-day-aligned,
+        rather than re-aggregating hours that were never returned.
+        """
+        params = _query_params(filters)
+        params["bucket"] = bucket
+        data = await self._request_json("GET", "/api/watch-events/histogram", params=params)
+        return data.get("bucket", bucket), data.get("buckets", [])
 
     async def get_event(self, event_uuid: str) -> dict[str, Any] | None:
         try:
