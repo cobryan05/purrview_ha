@@ -2,10 +2,11 @@
 (proxy.py, api.py, services.py, media_source.py each have their own test files)."""
 
 import pytest
+from homeassistant.components.frontend import DATA_EXTRA_MODULE_URL
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.purrview import async_setup_entry, async_unload_entry
+from custom_components.purrview import _CARD_URL, async_setup_entry, async_unload_entry
 from custom_components.purrview.api import PurrViewClient
 from custom_components.purrview.const import CONF_TOKEN, DOMAIN
 from custom_components.purrview.services import SERVICE_FLAG_EVENT
@@ -15,10 +16,15 @@ DATA = {"host": "192.168.1.50", "port": 7999, CONF_TOKEN: "s3cr3t"}
 
 @pytest.fixture(autouse=True)
 async def _http(hass):
-    # async_setup_entry registers the proxy view, which needs hass.http to exist -
-    # not something a real HA install has to arrange (the http component is always
-    # up), but the test harness starts with none of core's components loaded.
+    # async_setup_entry registers the proxy views, which need hass.http to exist -
+    # not something a real HA install has to arrange (it's always up), but the test
+    # harness starts with none of core's components loaded.
     await async_setup_component(hass, "http", {})
+    # add_extra_js_url only needs this one hass.data key to exist, normally seeded by
+    # frontend's own async_setup - setting up the real "frontend" component instead
+    # pulls in the hass_frontend asset package (the compiled web UI), which is not a
+    # dependency this repo otherwise has any reason to carry just for a unit test.
+    hass.data.setdefault(DATA_EXTRA_MODULE_URL, set())
 
 
 def _entry(hass, entry_id="entry-1", data=DATA):
@@ -55,6 +61,24 @@ class TestSetup:
         route_count_after_second = len(hass.http.app.router.routes())
 
         assert route_count_after_second == route_count_after_first
+
+    async def test_registers_the_card_as_a_frontend_module_exactly_once(self, hass):
+        from homeassistant.components.frontend import DATA_EXTRA_MODULE_URL
+
+        await async_setup_entry(hass, _entry(hass, "entry-1"))
+        await async_setup_entry(hass, _entry(hass, "entry-2", {**DATA, "host": "192.168.1.60"}))
+
+        urls = hass.data[DATA_EXTRA_MODULE_URL]
+        assert list(urls).count(_CARD_URL) == 1
+
+    async def test_serves_the_card_file_through_the_static_path(self, hass, hass_client):
+        await async_setup_entry(hass, _entry(hass))
+        client = await hass_client()
+
+        resp = await client.get(_CARD_URL)
+
+        assert resp.status == 200
+        assert b"customElements.define" in await resp.read()
 
 
 class TestUnload:

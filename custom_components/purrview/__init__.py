@@ -3,12 +3,18 @@
 WP-4: the media proxy view and the live-preview view (both streamed through HA, auth
 and all), a `PurrViewClient` per config entry, and the `purrview.flag_event` service.
 media_source (media_source.py) builds on the client this stores too, but is
-auto-discovered by HA's own platform loader rather than wired in here. See
-HA_INTEGRATION_PLAN.md in the main PurrView repo for the full build order.
+auto-discovered by HA's own platform loader rather than wired in here. WP-5: the
+purrview-card Lovelace card lives in www/ and is registered as a frontend module
+below, not through a platform. See HA_INTEGRATION_PLAN.md in the main PurrView repo
+for the full build order.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from homeassistant.components.frontend import add_extra_js_url
+from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.core import HomeAssistant
@@ -23,6 +29,10 @@ from .services import SERVICE_FLAG_EVENT, async_register_services
 #: underscore - so this can share `hass.data[DOMAIN]` with the entry_id -> client map
 #: below instead of needing a second dict just to say "the view is registered".
 _VIEW_REGISTERED_KEY = "_view_registered"
+
+_WWW_DIR = Path(__file__).parent / "www"
+_STATIC_URL_PATH = "/purrview_files"
+_CARD_URL = f"{_STATIC_URL_PATH}/purrview-card.js"
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -40,6 +50,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if not domain_data.get(_VIEW_REGISTERED_KEY):
         hass.http.register_view(PurrViewMediaProxyView(hass))
         hass.http.register_view(PurrViewLivePreviewView(hass))
+        # cache_headers=False: an unversioned URL that could otherwise leave a viewer
+        # stuck on a stale card after an update until they hard-refresh.
+        await hass.http.async_register_static_paths(
+            [StaticPathConfig(_STATIC_URL_PATH, str(_WWW_DIR), cache_headers=False)]
+        )
+        # Auto-registers the card as a Lovelace resource for every dashboard - the
+        # viewer never has to add "purrview-card.js" under Settings > Dashboards >
+        # Resources by hand.
+        add_extra_js_url(hass, _CARD_URL)
         domain_data[_VIEW_REGISTERED_KEY] = True
 
     # Re-registering on every entry is harmless (see async_register_services), so
