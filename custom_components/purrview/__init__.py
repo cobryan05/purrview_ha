@@ -1,7 +1,7 @@
-"""The WhiskerWatcher integration.
+"""The PurrView integration.
 
 Just config entry storage for now. Platforms (media_source, the proxy view, the
-flag service) show up with WP-4 - see HA_INTEGRATION_PLAN.md in the whiskerwatcher
+flag service) show up with WP-4 - see HA_INTEGRATION_PLAN.md in the purrview
 repo for the full build order.
 """
 

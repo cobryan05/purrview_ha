@@ -1,7 +1,7 @@
-"""Config flow for WhiskerWatcher.
+"""Config flow for PurrView.
 
 Just asks for host/port/token and checks something answers before saving the
-entry. There's no WhiskerWatcher endpoint yet that's specifically meant for a
+entry. There's no PurrView endpoint yet that's specifically meant for a
 health check - WP-3's auth middleware and WP-4's proxy routes don't exist -
 so a plain connection failure is the only thing worth catching here.
 """
@@ -30,7 +30,7 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
 
 
 class CannotConnect(HomeAssistantError):
-    """Couldn't reach the WhiskerWatcher instance."""
+    """Couldn't reach the PurrView instance."""
 
 
 async def _validate_input(hass: HomeAssistant, data: dict[str, Any]) -> None:
@@ -49,7 +49,7 @@ async def _validate_input(hass: HomeAssistant, data: dict[str, Any]) -> None:
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for WhiskerWatcher."""
+    """Handle a config flow for PurrView."""
 
     VERSION = 1
 

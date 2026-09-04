@@ -7,7 +7,7 @@ an unreachable one re-shows the form with an error instead of blowing up.
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResultType
 
-from custom_components.whiskerwatcher.const import DOMAIN
+from custom_components.purrview.const import DOMAIN
 
 
 async def test_user_flow_creates_entry(hass, aioclient_mock):
