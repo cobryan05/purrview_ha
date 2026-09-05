@@ -15,6 +15,9 @@
  *   default_subject_refs: [ref, ...]            (optional - preset subject filter)
  *   default_rule_uuids: [uuid, ...]             (optional - preset event-type filter)
  *   default_range: 'today'|'7d'|'30d'|'all'     (optional, default '7d')
+ *   max_height: <number>                        (optional, default 480 - the grid
+ *     and timeline scroll internally past this height in px, rather than growing the
+ *     card without bound and pushing everything below it off the dashboard)
  *
  * Defaults are what "Reset filters" returns to, not just the initial state - a
  * dashboard built for one cat should snap back to that cat, not to nothing, when a
@@ -84,6 +87,9 @@ const STYLE = `
   .view-btn.active { background: var(--primary-color); color: var(--text-primary-color, #fff); border-color: var(--primary-color); }
   .status { padding: 8px 4px; color: var(--secondary-text-color); font-size: 0.9em; }
   .status--error { color: var(--error-color, #db4437); }
+  .grid-wrap {
+    max-height: var(--purrview-events-max-height, 480px); overflow-y: auto;
+  }
   .grid {
     display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px;
   }
@@ -140,7 +146,9 @@ const STYLE = `
   /* ---- timeline: one swimlane per subject/rule, plain absolutely-positioned marks
      inside a shared-grid label|track layout - same visual language as the app's own
      events timeline (nvr/events/timeline.js), no canvas or SVG. ---- */
-  .tl-body { overflow-x: auto; }
+  .tl-body {
+    overflow-x: auto; overflow-y: auto; max-height: var(--purrview-events-max-height, 480px);
+  }
   .tl-row {
     display: grid; grid-template-columns: minmax(6rem, 14ch) 1fr; align-items: center;
     min-height: 30px; column-gap: 8px;
@@ -311,6 +319,15 @@ class PurrviewEventsCard extends HTMLElement {
     this._events = [];
     this._total = 0;
     this._view = 'grid';
+    // A CSS custom property on the host, not a style rule keyed off a class - it
+    // inherits into the shadow root's own `.grid-wrap`/`.tl-body` rules from here,
+    // which is the one thing that lets a *config* value reach a *shadow DOM* style
+    // without threading it through every element by hand.
+    if (config.max_height) {
+      this.style.setProperty('--purrview-events-max-height', `${config.max_height}px`);
+    } else {
+      this.style.removeProperty('--purrview-events-max-height');
+    }
     if (!this._built) this._build();
   }
 
@@ -433,6 +450,7 @@ class PurrviewEventsCard extends HTMLElement {
     status.textContent = 'Loading…';
 
     const gridWrap = document.createElement('div');
+    gridWrap.className = 'grid-wrap';
     const grid = document.createElement('div');
     grid.className = 'grid';
     const loadMore = document.createElement('button');
@@ -1335,7 +1353,21 @@ class PurrviewEventsCardEditor extends HTMLElement {
     });
     rangeRow.append(rangeLabel, rangeSelect);
 
-    root.append(style, entryRow, titleRow, filtersRow, rangeRow);
+    const maxHeightRow = document.createElement('div');
+    maxHeightRow.className = 'row';
+    const maxHeightLabel = document.createElement('label');
+    maxHeightLabel.textContent = 'Max height in px (optional)';
+    const maxHeightInput = document.createElement('input');
+    maxHeightInput.type = 'number';
+    maxHeightInput.min = '1';
+    maxHeightInput.placeholder = '480';
+    maxHeightInput.addEventListener('change', () => {
+      const value = maxHeightInput.value ? Number(maxHeightInput.value) : undefined;
+      this._updateConfig({ max_height: value });
+    });
+    maxHeightRow.append(maxHeightLabel, maxHeightInput);
+
+    root.append(style, entryRow, titleRow, filtersRow, rangeRow, maxHeightRow);
     root.addEventListener('click', (ev) => {
       if (!ev.composedPath().some((el) => el === sourcePicker || el === subjectPicker || el === rulePicker)) {
         sourcePicker.closeMenu();
@@ -1343,7 +1375,7 @@ class PurrviewEventsCardEditor extends HTMLElement {
         rulePicker.closeMenu();
       }
     });
-    this._els = { entrySelector, titleInput, sourcePicker, subjectPicker, rulePicker, rangeSelect };
+    this._els = { entrySelector, titleInput, sourcePicker, subjectPicker, rulePicker, rangeSelect, maxHeightInput };
     this._built = true;
   }
 
@@ -1368,6 +1400,9 @@ class PurrviewEventsCardEditor extends HTMLElement {
       this._els.titleInput.value = this._config?.title || '';
     }
     this._els.rangeSelect.value = this._config?.default_range || '7d';
+    if (document.activeElement !== this._els.maxHeightInput) {
+      this._els.maxHeightInput.value = this._config?.max_height || '';
+    }
   }
 
   _updateConfig(patch) {
