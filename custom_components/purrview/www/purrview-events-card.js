@@ -27,6 +27,10 @@ const RANGE_OPTIONS = [
   { value: '7d', label: 'Last 7 days', startFrom: () => new Date(Date.now() - 7 * DAY_MS) },
   { value: '30d', label: 'Last 30 days', startFrom: () => new Date(Date.now() - 30 * DAY_MS) },
   { value: 'all', label: 'All time', startFrom: () => null },
+  // startFrom is never called for this one - _filterParams/_timelineRange branch on
+  // `range === 'custom'` before reaching the RANGE_OPTIONS lookup, since a custom
+  // range needs the two date inputs' values, not something computable from `this`.
+  { value: 'custom', label: 'Custom range…', startFrom: () => null },
 ];
 
 const STYLE = `
@@ -36,10 +40,10 @@ const STYLE = `
   .filters {
     display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; align-items: center;
   }
-  .filters select {
+  .filters select, .filters input[type="date"] {
     font-size: 0.85em; padding: 6px 8px; border-radius: 6px;
     border: 1px solid var(--divider-color); background: var(--card-background-color);
-    color: var(--primary-text-color);
+    color: var(--primary-text-color); color-scheme: light dark;
   }
   .multiselect { position: relative; }
   .multiselect-btn {
@@ -117,6 +121,13 @@ const STYLE = `
   .lightbox video, .lightbox img { display: block; width: 100%; max-height: 70vh; background: #000; }
   .lightbox-caption { padding: 10px 14px; font-size: 0.9em; color: var(--primary-text-color); display: flex; justify-content: space-between; align-items: center; }
   .lightbox-close { cursor: pointer; background: none; border: none; font-size: 1.3em; color: var(--primary-text-color); }
+  .lightbox-actions { padding: 0 14px 12px; display: flex; justify-content: flex-end; }
+  .flag-btn {
+    font-size: 0.8em; padding: 6px 10px; border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--divider-color); background: transparent; color: var(--primary-text-color);
+  }
+  .flag-btn.flagged { color: var(--warning-color, #ff9800); border-color: var(--warning-color, #ff9800); cursor: default; }
+  .flag-btn[disabled] { opacity: 0.6; cursor: default; }
 
   /* ---- timeline: one swimlane per subject/rule, plain absolutely-positioned marks
      inside a shared-grid label|track layout - same visual language as the app's own
@@ -201,6 +212,27 @@ function dayLabel(iso) {
 //: append 'Z' before parsing, the same convention fmtWhen/parseEventDate use.
 function parseBucketStart(bucketStart) {
   return Date.parse(`${bucketStart}Z`);
+}
+
+//: `new Date("YYYY-MM-DD")` (an <input type="date">'s own value format) parses as
+//: UTC midnight per spec, not local midnight - for a viewer west of UTC that's the
+//: previous evening, silently shifting the whole range by a day. Splitting the
+//: components out and building the Date from them constructs local midnight instead.
+function parseLocalDate(dateStr) {
+  if (!dateStr) return null;
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+
+//: Both bounds are optional and independent, same as start_from/start_to already
+//: are server-side - "from Aug 1" with no end means "through now," "through Aug 31"
+//: with no start means "since the beginning." The end date is a calendar day, made
+//: inclusive by advancing to the start of the next local day.
+function customRangeBounds(filters) {
+  const start = parseLocalDate(filters.customStart);
+  const endDay = parseLocalDate(filters.customEnd);
+  const end = endDay ? new Date(endDay.getTime() + DAY_MS) : null;
+  return [start, end];
 }
 
 //: Folds a groups/histogram row down to the timeline's lane identity: one lane per
@@ -333,8 +365,29 @@ class PurrviewEventsCard extends HTMLElement {
       rangeSelect.appendChild(o);
     }
     rangeSelect.value = this._filters.range;
+
+    const customStart = document.createElement('input');
+    customStart.type = 'date';
+    customStart.hidden = this._filters.range !== 'custom';
+    customStart.addEventListener('change', () => {
+      this._filters.customStart = customStart.value || null;
+      this._clearDrillDown();
+      this._reload();
+    });
+
+    const customEnd = document.createElement('input');
+    customEnd.type = 'date';
+    customEnd.hidden = this._filters.range !== 'custom';
+    customEnd.addEventListener('change', () => {
+      this._filters.customEnd = customEnd.value || null;
+      this._clearDrillDown();
+      this._reload();
+    });
+
     rangeSelect.addEventListener('change', () => {
       this._filters.range = rangeSelect.value;
+      customStart.hidden = rangeSelect.value !== 'custom';
+      customEnd.hidden = rangeSelect.value !== 'custom';
       this._clearDrillDown();
       this._reload();
     });
@@ -344,7 +397,7 @@ class PurrviewEventsCard extends HTMLElement {
     reset.textContent = 'Reset filters';
     reset.addEventListener('click', () => this._resetFilters());
 
-    filters.append(sourceSelect, subjectSelect, ruleSelect, rangeSelect, reset);
+    filters.append(sourceSelect, subjectSelect, ruleSelect, rangeSelect, customStart, customEnd, reset);
 
     const views = document.createElement('div');
     views.className = 'views';
@@ -397,6 +450,8 @@ class PurrviewEventsCard extends HTMLElement {
       subjectSelect,
       ruleSelect,
       rangeSelect,
+      customStart,
+      customEnd,
       status,
       gridWrap,
       grid,
@@ -505,6 +560,10 @@ class PurrviewEventsCard extends HTMLElement {
     this._filters = { source_uuids: [], subject_refs: [], rule_uuids: [], range: '7d' };
     for (const key of ['sourceSelect', 'subjectSelect', 'ruleSelect']) this._syncMultiSelect(this._els[key]);
     this._els.rangeSelect.value = '7d';
+    this._els.customStart.value = '';
+    this._els.customStart.hidden = true;
+    this._els.customEnd.value = '';
+    this._els.customEnd.hidden = true;
     this._clearDrillDown();
     this._reload();
   }
@@ -541,6 +600,10 @@ class PurrviewEventsCard extends HTMLElement {
     if (this._filters.explicitStart) {
       params.set('start_from', this._filters.explicitStart);
       if (this._filters.explicitEnd) params.set('start_to', this._filters.explicitEnd);
+    } else if (this._filters.range === 'custom') {
+      const [start, end] = customRangeBounds(this._filters);
+      if (start) params.set('start_from', start.toISOString());
+      if (end) params.set('start_to', end.toISOString());
     } else {
       const rangeOpt = RANGE_OPTIONS.find((o) => o.value === this._filters.range);
       const startFrom = rangeOpt?.startFrom();
@@ -654,12 +717,20 @@ class PurrviewEventsCard extends HTMLElement {
   //: exact cutoff, not the whole UTC hour), and a drill-down that blindly re-queries
   //: the full hour would silently pull in extra events from before the filter.
   _timelineRange(buckets, bucketMs) {
-    const rangeOpt = RANGE_OPTIONS.find((o) => o.value === this._filters.range);
-    const explicitStart = rangeOpt?.startFrom();
-    const end = Date.now();
-    this._timelineQueryStart = explicitStart ? explicitStart.getTime() : null;
-    if (explicitStart) return { start: explicitStart.getTime(), end };
-    if (!buckets.length) return { start: end - 7 * DAY_MS, end };
+    const now = Date.now();
+    if (this._filters.range === 'custom') {
+      const [customStart, customEnd] = customRangeBounds(this._filters);
+      this._timelineQueryStart = customStart ? customStart.getTime() : null;
+      if (customStart || customEnd) {
+        return { start: customStart ? customStart.getTime() : now - 7 * DAY_MS, end: Math.min(customEnd ? customEnd.getTime() : now, now) };
+      }
+    } else {
+      const rangeOpt = RANGE_OPTIONS.find((o) => o.value === this._filters.range);
+      const explicitStart = rangeOpt?.startFrom();
+      this._timelineQueryStart = explicitStart ? explicitStart.getTime() : null;
+      if (explicitStart) return { start: explicitStart.getTime(), end: now };
+    }
+    if (!buckets.length) return { start: now - 7 * DAY_MS, end: now };
     const starts = buckets.map((b) => parseBucketStart(b.bucketStart));
     return { start: Math.min(...starts), end: Math.max(...starts) + bucketMs };
   }
@@ -993,8 +1064,50 @@ class PurrviewEventsCard extends HTMLElement {
     caption.append(label, close);
     inner.appendChild(caption);
 
+    const actions = document.createElement('div');
+    actions.className = 'lightbox-actions';
+    actions.appendChild(this._flagButton(event));
+    inner.appendChild(actions);
+
     lightbox.appendChild(inner);
     lightbox.hidden = false;
+  }
+
+  //: purrview.flag_event (services.py, WP-1) sets reviewState to "flagged" - the
+  //: same status the main app's own event detail modal uses for "labels were wrong"
+  //: (nvr/events/eventDetailModal.js). This card has no frame-correction tool of its
+  //: own; flagging just puts the event in that app's review queue for a human there.
+  _flagButton(event) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'flag-btn';
+    const setFlagged = () => {
+      button.textContent = 'Flagged for review ✓';
+      button.classList.add('flagged');
+      button.disabled = true;
+    };
+    if (event.reviewState === 'flagged') {
+      setFlagged();
+    } else {
+      button.textContent = 'Flag: wrong label';
+      button.addEventListener('click', async () => {
+        button.disabled = true;
+        button.textContent = 'Flagging…';
+        try {
+          await this._hass.callService('purrview', 'flag_event', {
+            event_uuid: event.uuid,
+            reason: 'wrong_label',
+            config_entry_id: this._config.entry_id,
+          });
+          event.reviewState = 'flagged';
+          setFlagged();
+        } catch (err) {
+          button.disabled = false;
+          button.textContent = `Could not flag — retry (${err.message || err})`;
+        }
+      });
+    }
+    return button;
   }
 
   _closeLightbox() {
