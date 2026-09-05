@@ -197,9 +197,15 @@ function fmtWhen(iso) {
   return sameDay ? time : `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${time}`;
 }
 
-function clipRecordingUuid(event) {
-  const rec = (event.recordings || []).find((r) => r.kind === 'clip' && r.status === 'complete');
-  return rec ? rec.uuid : null;
+function playableRecordingUuid(event) {
+  // Clip and timelapse are both video recordings the lightbox can play - only a bare
+  // snapshot jpg can't be. Prefer a clip when both exist: it's the real-time footage,
+  // not a compressed summary of it.
+  const recordings = event.recordings || [];
+  const byKind = Object.fromEntries(
+    recordings.filter((r) => r.status === 'complete').map((r) => [r.kind, r.uuid])
+  );
+  return byKind.clip || byKind.timelapse || null;
 }
 
 function parseEventDate(iso) {
@@ -1059,7 +1065,7 @@ class PurrviewEventsCard extends HTMLElement {
     const inner = document.createElement('div');
     inner.className = 'lightbox-inner';
 
-    const recordingUuid = clipRecordingUuid(event);
+    const recordingUuid = playableRecordingUuid(event);
     if (recordingUuid) {
       // 300s, not the grid thumbnail's 60s - a clip can run longer than that between
       // opening the lightbox and finishing playback, and a scrub past that point would
@@ -1072,10 +1078,7 @@ class PurrviewEventsCard extends HTMLElement {
       if (signed && token === this._lightboxToken) {
         const video = document.createElement('video');
         video.controls = true;
-        // Browsers block non-muted autoplay outright - without this, the video sat
-        // paused on its very first frame, indistinguishable from a still image,
-        // found live rather than by reading the code (controls were there, just
-        // never seemed worth reaching for on what looked like a static photo).
+        // Browsers block non-muted autoplay outright.
         video.muted = true;
         video.autoplay = true;
         video.src = signed;

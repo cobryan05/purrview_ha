@@ -188,10 +188,11 @@ class TestDayLevel:
 
 
 class TestEventLevel:
-    async def test_only_events_with_a_complete_clip_are_listed(self, hass, aioclient_mock):
+    async def test_only_events_with_a_complete_recording_are_listed(self, hass, aioclient_mock):
         """The conditional that matters: an event mid-extraction, or one whose clip
         expired out of the ring buffer, has nothing to play - listing it as a leaf
-        would be a dead link in the media browser."""
+        would be a dead link in the media browser. A timelapse-only event is still
+        playable, and belongs in the listing alongside clip events."""
         aioclient_mock.get(
             f"{BASE}/api/watch-events",
             json={
@@ -210,15 +211,20 @@ class TestEventLevel:
                         "recordings": [{"uuid": "rec-2", "kind": "clip", "status": "pending"}],
                     },
                     {"uuid": "e3", "startedAt": "2026-06-15T19:30:00", "recordings": []},
+                    {
+                        "uuid": "e4",
+                        "startedAt": "2026-06-15T20:00:00",
+                        "recordings": [{"uuid": "rec-4", "kind": "timelapse", "status": "complete"}],
+                    },
                 ],
-                "total": 3,
+                "total": 4,
             },
         )
         source, item = _browse(hass, f"{ENTRY_ID}/by_camera/src-1/r1/2026-06-15")
 
         result = await source.async_browse_media(item)
 
-        assert [c.identifier for c in result.children] == [f"{ENTRY_ID}/event/e1"]
+        assert [c.identifier for c in result.children] == [f"{ENTRY_ID}/event/e1", f"{ENTRY_ID}/event/e4"]
         assert result.children[0].can_play is True
         assert result.children[0].thumbnail == f"/api/purrview/{ENTRY_ID}/snapshot/e1"
 
@@ -275,12 +281,47 @@ class TestResolveMedia:
         assert result.url == f"/api/purrview/{ENTRY_ID}/recording/rec-1"
         assert result.mime_type == "video/mp4"
 
-    async def test_an_event_with_no_complete_clip_is_unresolvable(self, hass, aioclient_mock):
+    async def test_resolves_to_the_timelapse_recording_when_there_is_no_clip(self, hass, aioclient_mock):
         aioclient_mock.get(
             f"{BASE}/api/watch-events/e1",
             json={
                 "status": "success",
                 "event": {"uuid": "e1", "recordings": [{"uuid": "rec-1", "kind": "timelapse", "status": "complete"}]},
+            },
+        )
+        source, item = _browse(hass, f"{ENTRY_ID}/event/e1")
+
+        result = await source.async_resolve_media(item)
+
+        assert result.url == f"/api/purrview/{ENTRY_ID}/recording/rec-1"
+        assert result.mime_type == "video/mp4"
+
+    async def test_prefers_the_clip_over_a_timelapse_when_both_are_complete(self, hass, aioclient_mock):
+        aioclient_mock.get(
+            f"{BASE}/api/watch-events/e1",
+            json={
+                "status": "success",
+                "event": {
+                    "uuid": "e1",
+                    "recordings": [
+                        {"uuid": "rec-timelapse", "kind": "timelapse", "status": "complete"},
+                        {"uuid": "rec-clip", "kind": "clip", "status": "complete"},
+                    ],
+                },
+            },
+        )
+        source, item = _browse(hass, f"{ENTRY_ID}/event/e1")
+
+        result = await source.async_resolve_media(item)
+
+        assert result.url == f"/api/purrview/{ENTRY_ID}/recording/rec-clip"
+
+    async def test_an_event_with_no_complete_recording_is_unresolvable(self, hass, aioclient_mock):
+        aioclient_mock.get(
+            f"{BASE}/api/watch-events/e1",
+            json={
+                "status": "success",
+                "event": {"uuid": "e1", "recordings": [{"uuid": "rec-1", "kind": "clip", "status": "pending"}]},
             },
         )
         source, item = _browse(hass, f"{ENTRY_ID}/event/e1")

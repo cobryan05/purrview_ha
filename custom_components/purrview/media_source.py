@@ -216,12 +216,12 @@ class PurrViewMediaSource(MediaSource):
             limit=200,
             **filters,
         )
-        children = [self._event_leaf(entry_id, e) for e in events if _has_playable_clip(e)]
+        children = [self._event_leaf(entry_id, e) for e in events if _has_playable_recording(e)]
         return self._folder(prefix, day, children=children)
 
     async def _browse_recent(self, entry_id: str, client: PurrViewClient) -> BrowseMediaSource:
         events, _ = await client.list_events(limit=_RECENT_LIMIT)
-        children = [self._event_leaf(entry_id, e) for e in events if _has_playable_clip(e)]
+        children = [self._event_leaf(entry_id, e) for e in events if _has_playable_recording(e)]
         return self._folder(f"{entry_id}/recent", "Recent", children=children)
 
     async def _names_for(self, client: PurrViewClient, field: str) -> dict[str, str]:
@@ -278,7 +278,7 @@ class PurrViewMediaSource(MediaSource):
         if event is None:
             raise Unresolvable(f"PurrView event '{event_uuid}' no longer exists")
 
-        recording_uuid = _clip_recording_uuid(event)
+        recording_uuid = _playable_recording_uuid(event)
         if recording_uuid is None:
             raise Unresolvable(f"PurrView event '{event_uuid}' has no playable recording")
 
@@ -289,15 +289,21 @@ class PurrViewMediaSource(MediaSource):
         return PlayMedia(url=f"/api/purrview/{entry_id}/recording/{recording_uuid}", mime_type="video/mp4")
 
 
-def _has_playable_clip(event: dict) -> bool:
-    return _clip_recording_uuid(event) is not None
+def _has_playable_recording(event: dict) -> bool:
+    return _playable_recording_uuid(event) is not None
 
 
-def _clip_recording_uuid(event: dict) -> str | None:
-    for recording in event.get("recordings", []):
-        if recording.get("kind") == "clip" and recording.get("status") == "complete":
-            return recording.get("uuid")
-    return None
+def _playable_recording_uuid(event: dict) -> str | None:
+    # Clip and timelapse are both `<video>`-playable recordings (RecordingKind in
+    # apps/helpers/db/types.py) - only a bare snapshot jpg isn't. Prefer a clip when
+    # an event has both, since it's the real-time footage rather than a compressed
+    # summary of it.
+    by_kind = {
+        recording.get("kind"): recording.get("uuid")
+        for recording in event.get("recordings", [])
+        if recording.get("status") == "complete"
+    }
+    return by_kind.get("clip") or by_kind.get("timelapse")
 
 
 def _event_title(event: dict) -> str:

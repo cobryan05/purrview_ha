@@ -59,7 +59,7 @@ const STYLE = `
      own .placeholder rule above comes after the UA sheet's [hidden] rule in the
      cascade - so without this, setting the hidden *property* had no visible effect
      and the "Waiting for a frame..." placeholder stayed on screen under the canvas
-     forever, found live rather than in review. */
+     forever. */
   .placeholder[hidden] { display: none; }
 `;
 
