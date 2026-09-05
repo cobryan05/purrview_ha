@@ -11,12 +11,13 @@
  *     profile's first camera; a <select> lets the viewer switch if the profile
  *     watches more than one)
  *
- * Has a visual editor (PurrviewCardEditor below) - entry_id and profile_uuid are
- * picked from dropdowns backed by PurrViewWatchProfilesView, not hand-typed. A
- * profile can outlive any one running task_uuid (restarts, redeploys), which is
- * why this polls by profile_uuid and lets PurrViewClient.get_live_preview resolve
- * the current task server-side (see HA_INTEGRATION_PLAN.md WP-5) rather than the
- * card tracking a task_uuid itself.
+ * Has a visual editor (PurrviewCardEditor below) - entry_id, profile_uuid and
+ * source_uuid are all picked from dropdowns (backed by PurrViewWatchProfilesView and
+ * PurrViewProfileSourcesView respectively), not hand-typed. A profile can outlive
+ * any one running task_uuid (restarts, redeploys), which is why this polls by
+ * profile_uuid and lets PurrViewClient.get_live_preview resolve the current task
+ * server-side (see HA_INTEGRATION_PLAN.md WP-5) rather than the card tracking a
+ * task_uuid itself.
  */
 
 import {
@@ -432,7 +433,10 @@ class PurrviewCardEditor extends HTMLElement {
     // Editing an existing card (entry_id/profile_uuid already set) needs its
     // dropdowns populated immediately, not just on the next entry-picker change -
     // hass is already set by the time HA calls setConfig on a re-opened editor.
-    if (this._built) this._maybeLoadProfiles();
+    if (this._built) {
+      this._maybeLoadProfiles();
+      this._maybeLoadSources();
+    }
   }
 
   set hass(hass) {
@@ -440,6 +444,7 @@ class PurrviewCardEditor extends HTMLElement {
     if (!this._built) this._build();
     this._els.entrySelector.hass = hass;
     this._maybeLoadProfiles();
+    this._maybeLoadSources();
   }
 
   connectedCallback() {
@@ -471,12 +476,26 @@ class PurrviewCardEditor extends HTMLElement {
     profileLabel.textContent = 'Camera / watcher';
     const profileSelect = document.createElement('select');
     profileSelect.addEventListener('change', () => {
-      this._updateConfig({ profile_uuid: profileSelect.value || undefined });
+      // A source_uuid picked for the old profile isn't meaningful once the profile
+      // itself changes - it may not even watch that camera.
+      this._sourcesLoadedFor = undefined;
+      this._updateConfig({ profile_uuid: profileSelect.value || undefined, source_uuid: undefined });
+      this._maybeLoadSources();
     });
     profileRow.append(profileLabel, profileSelect);
 
-    root.append(style, entryRow, profileRow);
-    this._els = { entrySelector, profileSelect };
+    const sourceRow = document.createElement('div');
+    sourceRow.className = 'row';
+    const sourceLabel = document.createElement('label');
+    sourceLabel.textContent = 'Default camera (optional)';
+    const sourceSelect = document.createElement('select');
+    sourceSelect.addEventListener('change', () => {
+      this._updateConfig({ source_uuid: sourceSelect.value || undefined });
+    });
+    sourceRow.append(sourceLabel, sourceSelect);
+
+    root.append(style, entryRow, profileRow, sourceRow);
+    this._els = { entrySelector, profileSelect, sourceSelect };
     this._built = true;
   }
 
@@ -487,6 +506,7 @@ class PurrviewCardEditor extends HTMLElement {
     }
     this.dispatchEvent(new CustomEvent('config-changed', { detail: { config: this._config }, bubbles: true, composed: true }));
     this._renderProfileOptions();
+    this._renderSourceOptions();
   }
 
   async _maybeLoadProfiles() {
@@ -531,6 +551,59 @@ class PurrviewCardEditor extends HTMLElement {
       select.appendChild(opt);
     }
     select.value = this._config?.profile_uuid || '';
+  }
+
+  //: A profile's *configured* cameras (PurrViewProfileSourcesView, backed by
+  //: WatchProfileRead.sources), not get_live_preview's `sources` list - that one
+  //: only exists while the watcher happens to be running, and editing the card is a
+  //: perfectly normal thing to do while it isn't.
+  async _maybeLoadSources() {
+    if (!this._built) return;
+    const entryId = this._config?.entry_id;
+    const profileUuid = this._config?.profile_uuid;
+    if (!entryId || !profileUuid) {
+      this._sources = [];
+      this._renderSourceOptions();
+      return;
+    }
+    const cacheKey = `${entryId}/${profileUuid}`;
+    if (this._sourcesLoadedFor === cacheKey) {
+      this._renderSourceOptions();
+      return;
+    }
+    this._sourcesLoadedFor = cacheKey;
+    this._els.sourceSelect.disabled = true;
+    try {
+      const data = await this._hass.callApi('GET', `purrview/${entryId}/watch-profiles/${profileUuid}/sources`);
+      this._sources = data?.sources ?? [];
+    } catch {
+      this._sources = [];
+    }
+    this._els.sourceSelect.disabled = false;
+    this._renderSourceOptions();
+  }
+
+  _renderSourceOptions() {
+    if (!this._built) return;
+    const select = this._els.sourceSelect;
+    const sources = this._sources ?? [];
+
+    select.innerHTML = '';
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = this._config?.profile_uuid
+      ? sources.length
+        ? 'First camera (default)'
+        : 'No cameras found for this watcher'
+      : 'Pick a camera/watcher first';
+    select.appendChild(placeholder);
+    for (const source of sources) {
+      const opt = document.createElement('option');
+      opt.value = source.uuid;
+      opt.textContent = source.name;
+      select.appendChild(opt);
+    }
+    select.value = this._config?.source_uuid || '';
   }
 }
 

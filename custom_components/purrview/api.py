@@ -174,6 +174,28 @@ class PurrViewClient:
         data = await self._request_json("GET", "/api/watch-profiles")
         return [{"uuid": p["uuid"], "name": p["name"], "enabled": p.get("enabled", True)} for p in data.get("profiles", [])]
 
+    async def get_watch_profile_sources(self, profile_uuid: str) -> list[dict[str, str]]:
+        """A profile's configured cameras, as `[{"uuid", "name"}]`, in configured order.
+
+        Backs the live-view card editor's "default camera" picker - unlike
+        get_running_watcher_tasks/get_live_preview's `sources` list, this comes
+        straight from the profile's own config (`WatchProfileRead.sources`), so it's
+        available whether or not the watcher happens to be running while someone is
+        editing the card.
+        """
+        profile_data = await self._request_json("GET", f"/api/watch-profiles/{profile_uuid}")
+        profile = profile_data.get("profile") or {}
+        links = sorted(profile.get("sources", []), key=lambda s: s.get("order", 0))
+
+        sources_data = await self._request_json("GET", "/api/sources/get")
+        names = {uuid: source.get("name", uuid) for uuid, source in sources_data.get("sources", {}).items()}
+
+        return [
+            {"uuid": link["sourceUuid"], "name": names.get(link["sourceUuid"], link["sourceUuid"])}
+            for link in links
+            if link.get("enabled", True)
+        ]
+
     async def get_running_watcher_tasks(self) -> list[dict[str, str]]:
         """Every running watcher, as `[{"taskUuid": ..., "profileUuid": ...}]`.
 

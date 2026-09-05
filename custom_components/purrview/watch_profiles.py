@@ -51,3 +51,33 @@ class PurrViewWatchProfilesView(HomeAssistantView):
         ]
         result.sort(key=lambda p: (not p["live"], p["name"].lower()))
         return self.json({"profiles": result})
+
+
+class PurrViewProfileSourcesView(HomeAssistantView):
+    """`GET /api/purrview/{entry_id}/watch-profiles/{profile_uuid}/sources` ->
+    `{"sources": [{"uuid", "name"}]}`.
+
+    Backs the live-view card editor's "default camera" picker. Registered as its own
+    route rather than folded into PurrViewWatchProfilesView above (which lists every
+    profile, not one profile's cameras) - a genuinely different question, not a
+    filter on the same one.
+    """
+
+    url = "/api/purrview/{entry_id}/watch-profiles/{profile_uuid}/sources"
+    name = "api:purrview:watch-profile-sources"
+    requires_auth = True
+
+    def __init__(self, hass: HomeAssistant) -> None:
+        self._hass = hass
+
+    async def get(self, request: web.Request, entry_id: str, profile_uuid: str) -> web.Response:
+        client = configured_clients(self._hass).get(entry_id)
+        if client is None:
+            raise web.HTTPNotFound(reason="Unknown PurrView config entry")
+
+        try:
+            sources = await client.get_watch_profile_sources(profile_uuid)
+        except PurrViewApiError as err:
+            raise web.HTTPBadGateway(reason=str(err)) from err
+
+        return self.json({"sources": sources})

@@ -30,7 +30,7 @@ from .events import (
 from .live_preview import PurrViewLivePreviewView
 from .proxy import PurrViewMediaProxyView
 from .services import SERVICE_FLAG_EVENT, async_register_services
-from .watch_profiles import PurrViewWatchProfilesView
+from .watch_profiles import PurrViewProfileSourcesView, PurrViewWatchProfilesView
 
 #: Not a real config entry id - HA generates those as opaque hex, never with a leading
 #: underscore - so this can share `hass.data[DOMAIN]` with the entry_id -> client map
@@ -58,6 +58,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.http.register_view(PurrViewMediaProxyView(hass))
         hass.http.register_view(PurrViewLivePreviewView(hass))
         hass.http.register_view(PurrViewWatchProfilesView(hass))
+        hass.http.register_view(PurrViewProfileSourcesView(hass))
         hass.http.register_view(PurrViewEventsView(hass))
         hass.http.register_view(PurrViewEventFacetsView(hass))
         hass.http.register_view(PurrViewEventGroupsView(hass))

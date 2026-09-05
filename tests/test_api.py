@@ -87,6 +87,65 @@ class TestListWatchProfiles:
         assert await _client(hass).list_watch_profiles() == []
 
 
+class TestGetWatchProfileSources:
+    async def test_joins_profile_links_with_source_names_in_configured_order(self, hass, aioclient_mock):
+        aioclient_mock.get(
+            f"{BASE}/api/watch-profiles/p1",
+            json={
+                "status": "success",
+                "profile": {
+                    "sources": [
+                        {"sourceUuid": "s2", "order": 1, "enabled": True},
+                        {"sourceUuid": "s1", "order": 0, "enabled": True},
+                    ]
+                },
+            },
+        )
+        aioclient_mock.get(
+            f"{BASE}/api/sources/get",
+            json={"status": "success", "sources": {"s1": {"name": "Laundry"}, "s2": {"name": "Garage"}}},
+        )
+
+        sources = await _client(hass).get_watch_profile_sources("p1")
+
+        assert sources == [{"uuid": "s1", "name": "Laundry"}, {"uuid": "s2", "name": "Garage"}]
+
+    async def test_disabled_links_are_excluded(self, hass, aioclient_mock):
+        aioclient_mock.get(
+            f"{BASE}/api/watch-profiles/p1",
+            json={
+                "status": "success",
+                "profile": {
+                    "sources": [
+                        {"sourceUuid": "s1", "order": 0, "enabled": True},
+                        {"sourceUuid": "s2", "order": 1, "enabled": False},
+                    ]
+                },
+            },
+        )
+        aioclient_mock.get(
+            f"{BASE}/api/sources/get",
+            json={"status": "success", "sources": {"s1": {"name": "Laundry"}, "s2": {"name": "Garage"}}},
+        )
+
+        sources = await _client(hass).get_watch_profile_sources("p1")
+
+        assert sources == [{"uuid": "s1", "name": "Laundry"}]
+
+    async def test_a_source_missing_from_sources_get_falls_back_to_its_uuid(self, hass, aioclient_mock):
+        """A source deleted after being linked to a profile shouldn't crash the
+        editor's camera picker - it should just show something, its own uuid."""
+        aioclient_mock.get(
+            f"{BASE}/api/watch-profiles/p1",
+            json={"status": "success", "profile": {"sources": [{"sourceUuid": "s1", "order": 0, "enabled": True}]}},
+        )
+        aioclient_mock.get(f"{BASE}/api/sources/get", json={"status": "success", "sources": {}})
+
+        sources = await _client(hass).get_watch_profile_sources("p1")
+
+        assert sources == [{"uuid": "s1", "name": "s1"}]
+
+
 class TestListEvents:
     async def test_limit_and_offset_are_passed_through_as_query_params(self, hass, aioclient_mock):
         aioclient_mock.get(f"{BASE}/api/watch-events", json={"status": "success", "events": [], "total": 0})
