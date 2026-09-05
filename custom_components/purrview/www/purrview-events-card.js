@@ -11,10 +11,18 @@
  *   entry_id: <the purrview config entry id>   (required)
  *   title: <string>                             (optional, default "Events")
  *   page_size: <number>                         (optional, default 60)
+ *   default_source_uuids: [uuid, ...]           (optional - preset camera filter)
+ *   default_subject_refs: [ref, ...]            (optional - preset subject filter)
+ *   default_rule_uuids: [uuid, ...]             (optional - preset event-type filter)
+ *   default_range: 'today'|'7d'|'30d'|'all'     (optional, default '7d')
  *
- * No visual editor yet - entry_id is the only required field and there is exactly
- * one thing to pick (mirrors how purrview-card.js's editor exists only because it
- * has a second, non-obvious field to choose from a live list).
+ * Defaults are what "Reset filters" returns to, not just the initial state - a
+ * dashboard built for one cat should snap back to that cat, not to nothing, when a
+ * viewer resets it (see setConfig/_resetFilters).
+ *
+ * Has a visual editor (PurrviewEventsCardEditor below) with checkbox pickers for the
+ * three default_* filters, backed by the same event-facets endpoint the card itself
+ * uses - so an editor picks by name, never a hand-typed uuid.
  */
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -290,7 +298,16 @@ class PurrviewEventsCard extends HTMLElement {
     if (!config?.entry_id) throw new Error('purrview-events-card: "entry_id" is required');
     this._config = config;
     this._pageSize = config.page_size || DEFAULT_PAGE_SIZE;
-    this._filters = { source_uuids: [], subject_refs: [], rule_uuids: [], range: '7d' };
+    // Copied, not referenced - _filters gets mutated in place by every checkbox
+    // click, and that must never reach back into config.default_* itself, or a
+    // "Reset filters" click later would restore whatever the last click left behind.
+    this._defaultFilters = {
+      source_uuids: [...(config.default_source_uuids || [])],
+      subject_refs: [...(config.default_subject_refs || [])],
+      rule_uuids: [...(config.default_rule_uuids || [])],
+      range: config.default_range || '7d',
+    };
+    this._filters = { ...this._defaultFilters };
     this._events = [];
     this._total = 0;
     this._view = 'grid';
@@ -557,13 +574,15 @@ class PurrviewEventsCard extends HTMLElement {
   }
 
   _resetFilters() {
-    this._filters = { source_uuids: [], subject_refs: [], rule_uuids: [], range: '7d' };
+    // Returns to the card's configured defaults, not to nothing - a dashboard built
+    // for one cat should snap back to that cat on reset, not show every camera.
+    this._filters = { ...this._defaultFilters };
     for (const key of ['sourceSelect', 'subjectSelect', 'ruleSelect']) this._syncMultiSelect(this._els[key]);
-    this._els.rangeSelect.value = '7d';
+    this._els.rangeSelect.value = this._filters.range;
     this._els.customStart.value = '';
-    this._els.customStart.hidden = true;
+    this._els.customStart.hidden = this._filters.range !== 'custom';
     this._els.customEnd.value = '';
-    this._els.customEnd.hidden = true;
+    this._els.customEnd.hidden = this._filters.range !== 'custom';
     this._clearDrillDown();
     this._reload();
   }
@@ -1133,19 +1152,98 @@ const EDITOR_STYLE = `
   .row { margin-bottom: 12px; }
   label { display: block; font-size: 0.85em; margin-bottom: 4px; color: var(--secondary-text-color); }
   input[type="text"] { width: 100%; padding: 8px; font-size: 0.9em; border-radius: 4px; box-sizing: border-box; }
+  select { padding: 8px; font-size: 0.9em; border-radius: 4px; }
+  .picker-row { display: flex; flex-wrap: wrap; gap: 8px; }
+  .multiselect { position: relative; }
+  .multiselect-btn {
+    font-size: 0.85em; padding: 8px 10px; border-radius: 4px; cursor: pointer;
+    border: 1px solid var(--divider-color); background: var(--card-background-color);
+    color: var(--primary-text-color); white-space: nowrap;
+  }
+  .multiselect-btn.active { border-color: var(--primary-color); color: var(--primary-color); }
+  .multiselect-menu {
+    position: absolute; top: calc(100% + 4px); left: 0; z-index: 10; min-width: 160px;
+    max-height: 240px; overflow-y: auto; background: var(--card-background-color);
+    border: 1px solid var(--divider-color); border-radius: 8px; padding: 4px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+  }
+  .multiselect-menu[hidden] { display: none; }
+  .multiselect-item {
+    display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px;
+    font-size: 0.85em; cursor: pointer; white-space: nowrap;
+  }
+  .multiselect-item:hover { background: var(--secondary-background-color, rgba(0, 0, 0, 0.06)); }
 `;
+
+//: Shared by every default-filter picker in the editor below - each just supplies
+//: where its own selected values live (this._config.default_source_uuids, etc.) and
+//: how to write a new selection back. Deliberately not the card's own
+//: _makeMultiSelect/_renderMultiSelectOptions methods: those read/write
+//: `this._filters` on a PurrviewEventsCard instance directly, and adapting them to
+//: config-editing (undefined-when-empty, a different host class entirely) would cost
+//: more than this small standalone version.
+function buildEditorMultiSelect(label, getValues, setValues) {
+  const wrap = document.createElement('div');
+  wrap.className = 'multiselect';
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'multiselect-btn';
+  const menu = document.createElement('div');
+  menu.className = 'multiselect-menu';
+  menu.hidden = true;
+  button.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    menu.hidden = !menu.hidden;
+  });
+  wrap.append(button, menu);
+
+  function renderButton() {
+    const count = (getValues() || []).length;
+    button.textContent = count ? `${label} (${count})` : label;
+    button.classList.toggle('active', count > 0);
+  }
+  wrap.renderOptions = (options) => {
+    menu.innerHTML = '';
+    for (const opt of options) {
+      const item = document.createElement('label');
+      item.className = 'multiselect-item';
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.value = opt.ref;
+      checkbox.checked = (getValues() || []).includes(opt.ref);
+      checkbox.addEventListener('change', () => {
+        const selected = new Set(getValues() || []);
+        if (checkbox.checked) selected.add(opt.ref);
+        else selected.delete(opt.ref);
+        setValues([...selected]);
+        renderButton();
+      });
+      item.append(checkbox, document.createTextNode(opt.name));
+      menu.appendChild(item);
+    }
+    renderButton();
+  };
+  wrap.closeMenu = () => {
+    menu.hidden = true;
+  };
+  renderButton();
+  return wrap;
+}
 
 /**
  * Config editor for purrview-events-card: an entry picker (HA's generic
- * <ha-selector config_entry>, same shape purrview-card.js's editor uses) plus an
- * optional title field. No profile/camera picker here - unlike the live view card,
- * this one has nothing per-camera to choose; the filter bar itself is the camera
- * picker, at view time rather than config time.
+ * <ha-selector config_entry>, same shape purrview-card.js's editor uses), an
+ * optional title field, and checkbox pickers for the three default_* filters plus a
+ * default date range - so "a dashboard for one cat" is built by picking that cat
+ * here, not by hand-typing its subject_ref into YAML.
  */
 class PurrviewEventsCardEditor extends HTMLElement {
   setConfig(config) {
     this._config = { ...config };
-    if (this._built) this._sync();
+    if (this._built) {
+      this._sync();
+      this._maybeLoadFacets();
+    }
   }
 
   set hass(hass) {
@@ -1153,6 +1251,7 @@ class PurrviewEventsCardEditor extends HTMLElement {
     if (!this._built) this._build();
     this._els.entrySelector.hass = hass;
     this._sync();
+    this._maybeLoadFacets();
   }
 
   _build() {
@@ -1168,7 +1267,9 @@ class PurrviewEventsCardEditor extends HTMLElement {
     entrySelector.selector = { config_entry: { integration: 'purrview' } };
     entrySelector.addEventListener('value-changed', (ev) => {
       ev.stopPropagation();
+      this._facetsLoadedFor = undefined;
       this._updateConfig({ entry_id: ev.detail.value });
+      this._maybeLoadFacets();
     });
     entryRow.append(entryLabel, entrySelector);
 
@@ -1184,9 +1285,76 @@ class PurrviewEventsCardEditor extends HTMLElement {
     });
     titleRow.append(titleLabel, titleInput);
 
-    root.append(style, entryRow, titleRow);
-    this._els = { entrySelector, titleInput };
+    const filtersRow = document.createElement('div');
+    filtersRow.className = 'row';
+    const filtersLabel = document.createElement('label');
+    filtersLabel.textContent = 'Default filters (optional) - what "Reset filters" returns to';
+    const pickerRow = document.createElement('div');
+    pickerRow.className = 'picker-row';
+    const sourcePicker = buildEditorMultiSelect(
+      'Camera',
+      () => this._config?.default_source_uuids,
+      (values) => this._updateConfig({ default_source_uuids: values.length ? values : undefined })
+    );
+    const subjectPicker = buildEditorMultiSelect(
+      'Subject',
+      () => this._config?.default_subject_refs,
+      (values) => this._updateConfig({ default_subject_refs: values.length ? values : undefined })
+    );
+    const rulePicker = buildEditorMultiSelect(
+      'Event type',
+      () => this._config?.default_rule_uuids,
+      (values) => this._updateConfig({ default_rule_uuids: values.length ? values : undefined })
+    );
+    pickerRow.append(sourcePicker, subjectPicker, rulePicker);
+    filtersRow.append(filtersLabel, pickerRow);
+
+    const rangeRow = document.createElement('div');
+    rangeRow.className = 'row';
+    const rangeLabel = document.createElement('label');
+    rangeLabel.textContent = 'Default date range';
+    const rangeSelect = document.createElement('select');
+    for (const [value, text] of [
+      ['7d', 'Last 7 days'],
+      ['today', 'Today'],
+      ['30d', 'Last 30 days'],
+      ['all', 'All time'],
+    ]) {
+      const o = document.createElement('option');
+      o.value = value;
+      o.textContent = text;
+      rangeSelect.appendChild(o);
+    }
+    rangeSelect.addEventListener('change', () => {
+      this._updateConfig({ default_range: rangeSelect.value === '7d' ? undefined : rangeSelect.value });
+    });
+    rangeRow.append(rangeLabel, rangeSelect);
+
+    root.append(style, entryRow, titleRow, filtersRow, rangeRow);
+    root.addEventListener('click', (ev) => {
+      if (!ev.composedPath().some((el) => el === sourcePicker || el === subjectPicker || el === rulePicker)) {
+        sourcePicker.closeMenu();
+        subjectPicker.closeMenu();
+        rulePicker.closeMenu();
+      }
+    });
+    this._els = { entrySelector, titleInput, sourcePicker, subjectPicker, rulePicker, rangeSelect };
     this._built = true;
+  }
+
+  async _maybeLoadFacets() {
+    const entryId = this._config?.entry_id;
+    if (!entryId || !this._hass || this._facetsLoadedFor === entryId) return;
+    this._facetsLoadedFor = entryId;
+    try {
+      const facets = await this._hass.callApi('GET', `purrview/${entryId}/event-facets`);
+      this._els.sourcePicker.renderOptions(facets?.sources || []);
+      this._els.subjectPicker.renderOptions(facets?.subjects || []);
+      this._els.rulePicker.renderOptions(facets?.rules || []);
+    } catch {
+      // Leave the pickers empty - a facets fetch failing (PurrView unreachable while
+      // editing) shouldn't block editing the rest of the card's config.
+    }
   }
 
   _sync() {
@@ -1194,6 +1362,7 @@ class PurrviewEventsCardEditor extends HTMLElement {
     if (document.activeElement !== this._els.titleInput) {
       this._els.titleInput.value = this._config?.title || '';
     }
+    this._els.rangeSelect.value = this._config?.default_range || '7d';
   }
 
   _updateConfig(patch) {
