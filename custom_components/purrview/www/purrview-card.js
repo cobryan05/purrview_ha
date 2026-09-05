@@ -11,11 +11,12 @@
  *     profile's first camera; a <select> lets the viewer switch if the profile
  *     watches more than one)
  *
- * No card-config editor yet - YAML only. A profile can outlive any one running
- * task_uuid (restarts, redeploys), which is why this polls by profile_uuid and
- * lets PurrViewClient.get_live_preview resolve the current task server-side
- * (see HA_INTEGRATION_PLAN.md WP-5) rather than the card tracking a task_uuid
- * itself.
+ * Has a visual editor (PurrviewCardEditor below) - entry_id and profile_uuid are
+ * picked from dropdowns backed by PurrViewWatchProfilesView, not hand-typed. A
+ * profile can outlive any one running task_uuid (restarts, redeploys), which is
+ * why this polls by profile_uuid and lets PurrViewClient.get_live_preview resolve
+ * the current task server-side (see HA_INTEGRATION_PLAN.md WP-5) rather than the
+ * card tracking a task_uuid itself.
  */
 
 import {
@@ -79,6 +80,32 @@ class PurrviewCard extends HTMLElement {
 
   getCardSize() {
     return 6;
+  }
+
+  static getConfigElement() {
+    return document.createElement('purrview-card-editor');
+  }
+
+  static async getStubConfig(hass) {
+    // Best-effort: a fresh "Add Card" pick should just work for the common
+    // single-instance, single-camera household with no editing at all. Any
+    // failure here (no entries yet, PurrView unreachable) falls back to an
+    // incomplete config - setConfig's own validation then guides the viewer to
+    // the editor's dropdowns instead of leaving them looking at a blank card.
+    try {
+      const entries = await hass.callWS({ type: 'config_entries/get' });
+      const entry = entries.find((e) => e.domain === 'purrview');
+      if (!entry) return { type: 'custom:purrview-card' };
+
+      const data = await hass.callApi('GET', `purrview/${entry.entry_id}/watch-profiles`);
+      const profiles = data?.profiles ?? [];
+      const profile = profiles.find((p) => p.live) ?? profiles[0];
+      if (!profile) return { type: 'custom:purrview-card', entry_id: entry.entry_id };
+
+      return { type: 'custom:purrview-card', entry_id: entry.entry_id, profile_uuid: profile.uuid };
+    } catch {
+      return { type: 'custom:purrview-card' };
+    }
   }
 
   connectedCallback() {
@@ -366,6 +393,131 @@ class PurrviewCard extends HTMLElement {
 }
 
 customElements.define('purrview-card', PurrviewCard);
+
+const EDITOR_STYLE = `
+  .row { margin-bottom: 12px; }
+  label { display: block; font-size: 0.85em; margin-bottom: 4px; color: var(--secondary-text-color); }
+  select { width: 100%; padding: 8px; font-size: 0.9em; border-radius: 4px; }
+`;
+
+/**
+ * Config editor for purrview-card: two dropdowns (PurrView instance, camera/watcher)
+ * instead of hand-typed entry_id/profile_uuid. The instance dropdown is HA's own
+ * generic <ha-selector> with a `config_entry` selector (the same selector shape
+ * services.yaml uses for purrview.flag_event) - it already knows how to list and
+ * label config entries, so this doesn't re-implement that. The profile dropdown has
+ * no such built-in selector (there's no HA concept of "watch profile"), so it's
+ * populated by hand from PurrViewWatchProfilesView.
+ */
+class PurrviewCardEditor extends HTMLElement {
+  setConfig(config) {
+    this._config = { ...config };
+    // Editing an existing card (entry_id/profile_uuid already set) needs its
+    // dropdowns populated immediately, not just on the next entry-picker change -
+    // hass is already set by the time HA calls setConfig on a re-opened editor.
+    if (this._built) this._maybeLoadProfiles();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    if (!this._built) this._build();
+    this._els.entrySelector.hass = hass;
+    this._maybeLoadProfiles();
+  }
+
+  connectedCallback() {
+    if (this._built) this._renderProfileOptions();
+  }
+
+  _build() {
+    const root = this.attachShadow({ mode: 'open' });
+    const style = document.createElement('style');
+    style.textContent = EDITOR_STYLE;
+
+    const entryRow = document.createElement('div');
+    entryRow.className = 'row';
+    const entryLabel = document.createElement('label');
+    entryLabel.textContent = 'PurrView instance';
+    const entrySelector = document.createElement('ha-selector');
+    entrySelector.selector = { config_entry: { integration: 'purrview' } };
+    entrySelector.addEventListener('value-changed', (ev) => {
+      ev.stopPropagation();
+      this._loadedFor = undefined;
+      this._updateConfig({ entry_id: ev.detail.value, profile_uuid: undefined });
+      this._maybeLoadProfiles();
+    });
+    entryRow.append(entryLabel, entrySelector);
+
+    const profileRow = document.createElement('div');
+    profileRow.className = 'row';
+    const profileLabel = document.createElement('label');
+    profileLabel.textContent = 'Camera / watcher';
+    const profileSelect = document.createElement('select');
+    profileSelect.addEventListener('change', () => {
+      this._updateConfig({ profile_uuid: profileSelect.value || undefined });
+    });
+    profileRow.append(profileLabel, profileSelect);
+
+    root.append(style, entryRow, profileRow);
+    this._els = { entrySelector, profileSelect };
+    this._built = true;
+  }
+
+  _updateConfig(patch) {
+    this._config = { ...this._config, ...patch };
+    for (const key of Object.keys(this._config)) {
+      if (this._config[key] === undefined) delete this._config[key];
+    }
+    this.dispatchEvent(new CustomEvent('config-changed', { detail: { config: this._config }, bubbles: true, composed: true }));
+    this._renderProfileOptions();
+  }
+
+  async _maybeLoadProfiles() {
+    if (!this._built) return;
+    this._els.entrySelector.value = this._config?.entry_id;
+    const entryId = this._config?.entry_id;
+    if (!entryId) {
+      this._profiles = [];
+      this._renderProfileOptions();
+      return;
+    }
+    if (this._loadedFor === entryId) {
+      this._renderProfileOptions();
+      return;
+    }
+    this._loadedFor = entryId;
+    this._els.profileSelect.disabled = true;
+    try {
+      const data = await this._hass.callApi('GET', `purrview/${entryId}/watch-profiles`);
+      this._profiles = data?.profiles ?? [];
+    } catch {
+      this._profiles = [];
+    }
+    this._els.profileSelect.disabled = false;
+    this._renderProfileOptions();
+  }
+
+  _renderProfileOptions() {
+    if (!this._built) return;
+    const select = this._els.profileSelect;
+    const profiles = this._profiles ?? [];
+
+    select.innerHTML = '';
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = profiles.length ? 'Select a camera/watcher…' : 'No watch profiles found';
+    select.appendChild(placeholder);
+    for (const profile of profiles) {
+      const opt = document.createElement('option');
+      opt.value = profile.uuid;
+      opt.textContent = profile.live ? `${profile.name} (live)` : profile.name;
+      select.appendChild(opt);
+    }
+    select.value = this._config?.profile_uuid || '';
+  }
+}
+
+customElements.define('purrview-card-editor', PurrviewCardEditor);
 
 window.customCards = window.customCards || [];
 window.customCards.push({

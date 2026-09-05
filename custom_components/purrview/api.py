@@ -145,6 +145,17 @@ class PurrViewClient:
             json={"reviewState": "flagged", "metadataJson": metadata},
         )
 
+    async def list_watch_profiles(self) -> list[dict[str, Any]]:
+        """Every configured watch profile, as `[{"uuid", "name", "enabled"}]`.
+
+        Backs the Lovelace card's config editor, so a viewer picks a camera/watcher
+        by name instead of hand-typing a profile uuid dug out of the API or HA's own
+        storage files - the gap that made shipping the card as YAML-only impractical
+        for anyone but its own author.
+        """
+        data = await self._request_json("GET", "/api/watch-profiles")
+        return [{"uuid": p["uuid"], "name": p["name"], "enabled": p.get("enabled", True)} for p in data.get("profiles", [])]
+
     async def get_running_watcher_tasks(self) -> list[dict[str, str]]:
         """Every running watcher, as `[{"taskUuid": ..., "profileUuid": ...}]`.
 

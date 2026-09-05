@@ -24,6 +24,7 @@ from .const import CONF_TOKEN, DOMAIN
 from .live_preview import PurrViewLivePreviewView
 from .proxy import PurrViewMediaProxyView
 from .services import SERVICE_FLAG_EVENT, async_register_services
+from .watch_profiles import PurrViewWatchProfilesView
 
 #: Not a real config entry id - HA generates those as opaque hex, never with a leading
 #: underscore - so this can share `hass.data[DOMAIN]` with the entry_id -> client map
@@ -50,6 +51,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if not domain_data.get(_VIEW_REGISTERED_KEY):
         hass.http.register_view(PurrViewMediaProxyView(hass))
         hass.http.register_view(PurrViewLivePreviewView(hass))
+        hass.http.register_view(PurrViewWatchProfilesView(hass))
         # cache_headers=False: an unversioned URL that could otherwise leave a viewer
         # stuck on a stale card after an update until they hard-refresh.
         await hass.http.async_register_static_paths(

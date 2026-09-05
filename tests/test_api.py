@@ -51,6 +51,42 @@ class TestFacets:
         assert facets["sources"] == []
 
 
+class TestListWatchProfiles:
+    async def test_returns_uuid_name_and_enabled(self, hass, aioclient_mock):
+        aioclient_mock.get(
+            f"{BASE}/api/watch-profiles",
+            json={
+                "status": "success",
+                "profiles": [
+                    {"uuid": "p1", "name": "Cat Watcher", "enabled": True, "trackerTypename": "ignored"},
+                    {"uuid": "p2", "name": "Disabled Cam", "enabled": False},
+                ],
+            },
+        )
+
+        profiles = await _client(hass).list_watch_profiles()
+
+        assert profiles == [
+            {"uuid": "p1", "name": "Cat Watcher", "enabled": True},
+            {"uuid": "p2", "name": "Disabled Cam", "enabled": False},
+        ]
+
+    async def test_missing_enabled_defaults_to_true(self, hass, aioclient_mock):
+        aioclient_mock.get(
+            f"{BASE}/api/watch-profiles",
+            json={"status": "success", "profiles": [{"uuid": "p1", "name": "Cat Watcher"}]},
+        )
+
+        profiles = await _client(hass).list_watch_profiles()
+
+        assert profiles == [{"uuid": "p1", "name": "Cat Watcher", "enabled": True}]
+
+    async def test_no_profiles_is_an_empty_list_not_a_crash(self, hass, aioclient_mock):
+        aioclient_mock.get(f"{BASE}/api/watch-profiles", json={"status": "success"})
+
+        assert await _client(hass).list_watch_profiles() == []
+
+
 class TestListEvents:
     async def test_limit_and_offset_are_passed_through_as_query_params(self, hass, aioclient_mock):
         aioclient_mock.get(f"{BASE}/api/watch-events", json={"status": "success", "events": [], "total": 0})

@@ -80,6 +80,12 @@ class TestSetup:
         assert resp.status == 200
         assert b"customElements.define" in await resp.read()
 
+    async def test_registers_the_watch_profiles_view(self, hass):
+        await async_setup_entry(hass, _entry(hass))
+
+        canonicals = {resource.canonical for resource in hass.http.app.router.resources()}
+        assert "/api/purrview/{entry_id}/watch-profiles" in canonicals
+
 
 class TestUnload:
     async def test_removes_only_that_entrys_client(self, hass):

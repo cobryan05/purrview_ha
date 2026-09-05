@@ -27,9 +27,14 @@ the frame plus a toggleable detections/tracks/zones/labels overlay), backed by
 `PurrViewClient.get_live_preview`/`get_running_watcher_tasks` and
 `PurrViewLivePreviewView` (`live_preview.py`) resolving a watch profile to its current
 task server-side. Verified against a real running watcher on `purrview_mono_dev` via a
-disposable HA instance driven by Playwright - not just written and hoped-for. Still
-open: WP-5's filter mode (steps 4-7) - much of its goal is already covered by WP-4's
-`media_source` browser, so what's left is narrower than originally scoped.
+disposable HA instance driven by Playwright - not just written and hoped-for. The card
+also ships a visual config editor (`getConfigElement`/`getStubConfig` in
+`purrview-card.js`, backed by a new `PurrViewWatchProfilesView`/
+`PurrViewClient.list_watch_profiles` on the backend) - picking a PurrView instance and
+camera/watcher from dropdowns instead of hand-typing `entry_id`/`profile_uuid`, since
+that was impractical for anyone but this repo's own author. Still open: WP-5's filter
+mode (steps 4-7) - much of its goal is already covered by WP-4's `media_source`
+browser, so what's left is narrower than originally scoped.
 
 On the main app side, WP-1 (flag backend), WP-2 (MQTT bridge + discovery, since widened
 well past its original spec), WP-3 (auth token, widened into an optional web-UI login
