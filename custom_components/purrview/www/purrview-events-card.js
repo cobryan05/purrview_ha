@@ -41,7 +41,25 @@ const STYLE = `
     border: 1px solid var(--divider-color); background: var(--card-background-color);
     color: var(--primary-text-color);
   }
-  .filters ha-selector { flex: 1 1 150px; min-width: 130px; max-width: 220px; }
+  .multiselect { position: relative; }
+  .multiselect-btn {
+    font-size: 0.85em; padding: 6px 10px; border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--divider-color); background: var(--card-background-color);
+    color: var(--primary-text-color); white-space: nowrap;
+  }
+  .multiselect-btn.active { border-color: var(--primary-color); color: var(--primary-color); }
+  .multiselect-menu {
+    position: absolute; top: calc(100% + 4px); left: 0; z-index: 10; min-width: 160px;
+    max-height: 240px; overflow-y: auto; background: var(--card-background-color);
+    border: 1px solid var(--divider-color); border-radius: 8px; padding: 4px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+  }
+  .multiselect-menu[hidden] { display: none; }
+  .multiselect-item {
+    display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px;
+    font-size: 0.85em; cursor: pointer; white-space: nowrap;
+  }
+  .multiselect-item:hover { background: var(--secondary-background-color, rgba(0, 0, 0, 0.06)); }
   .reset {
     font-size: 0.85em; padding: 6px 10px; border-radius: 6px; cursor: pointer;
     border: 1px solid var(--divider-color); background: transparent; color: var(--primary-text-color);
@@ -250,13 +268,6 @@ class PurrviewEventsCard extends HTMLElement {
   set hass(hass) {
     const first = !this._hass;
     this._hass = hass;
-    // ha-selector renders nothing useful without a live .hass - same requirement
-    // the config editor's entrySelector has (see PurrviewEventsCardEditor below).
-    if (this._els) {
-      this._els.sourceSelect.hass = hass;
-      this._els.subjectSelect.hass = hass;
-      this._els.ruleSelect.hass = hass;
-    }
     if (first) this._init();
   }
 
@@ -397,32 +408,102 @@ class PurrviewEventsCard extends HTMLElement {
       viewTimelineBtn,
       lightbox,
     };
+    // Anywhere outside an open popover closes it - a plain shadow-root click
+    // listener, since the popovers aren't <dialog>/mwc elements with their own
+    // light-dismiss behavior.
+    root.addEventListener('click', (ev) => {
+      if (!ev.composedPath().some((el) => el === this._els.sourceSelect || el === this._els.subjectSelect || el === this._els.ruleSelect)) {
+        this._closeMultiSelects();
+      }
+    });
     this._setView('grid');
   }
 
-  //: A `ha-selector` (`select`, `multiple: true`) rather than a native
-  //: `<select multiple>` - the platform multi-select needs ctrl/cmd-click to pick
-  //: more than one option, which nothing in this UI hints at; HA's own selector
-  //: renders checkboxes/chips instead, the same component the config editor already
-  //: uses for entry_id (see PurrviewEventsCardEditor._build below).
+  //: A hand-rolled checkbox popover, not `ha-selector`'s `select` (any mode) - found
+  //: live to not survive contact with real clicks: `mode: 'dropdown'` renders a
+  //: searchable single-value `ha-combo-box` that just sets-and-closes per click
+  //: (never accumulates), and `mode: 'list'` fires `value-changed` with the wrong
+  //: value and leaves its own `.value` out of sync with what it just reported. This
+  //: owns its checked state directly in `this._filters`, so there's nothing to
+  //: reconcile with a black-box component's internal state.
   _makeMultiSelect(field, label) {
-    const selector = document.createElement('ha-selector');
-    selector.selector = { select: { multiple: true, mode: 'dropdown', options: [] } };
-    selector.label = label;
-    selector.value = [];
-    selector.addEventListener('value-changed', (ev) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'multiselect';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'multiselect-btn';
+    const menu = document.createElement('div');
+    menu.className = 'multiselect-menu';
+    menu.hidden = true;
+    button.addEventListener('click', (ev) => {
       ev.stopPropagation();
-      this._filters[field] = ev.detail.value || [];
-      this._clearDrillDown();
-      this._reload();
+      const willOpen = menu.hidden;
+      this._closeMultiSelects();
+      menu.hidden = !willOpen;
     });
+    wrap.append(button, menu);
+    wrap._field = field;
+    wrap._label = label;
+    wrap._button = button;
+    wrap._menu = menu;
+    wrap._options = [];
     this._built = true;
-    return selector;
+    return wrap;
+  }
+
+  //: Closes every open multi-select popover - used both for click-outside (there's
+  //: exactly one document-level listener, registered once in _build) and for "only
+  //: one open at a time" when a second button is clicked while another is open.
+  _closeMultiSelects() {
+    for (const key of ['sourceSelect', 'subjectSelect', 'ruleSelect']) {
+      this._els[key]._menu.hidden = true;
+    }
+  }
+
+  _renderMultiSelectOptions(wrap, options) {
+    wrap._options = options;
+    wrap._menu.innerHTML = '';
+    for (const opt of options) {
+      const item = document.createElement('label');
+      item.className = 'multiselect-item';
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.value = opt.ref;
+      checkbox.checked = (this._filters[wrap._field] || []).includes(opt.ref);
+      checkbox.addEventListener('change', () => {
+        const selected = new Set(this._filters[wrap._field] || []);
+        if (checkbox.checked) selected.add(opt.ref);
+        else selected.delete(opt.ref);
+        this._filters[wrap._field] = [...selected];
+        this._clearDrillDown();
+        this._reload();
+        this._renderMultiSelectButton(wrap);
+      });
+      item.append(checkbox, document.createTextNode(opt.name));
+      wrap._menu.appendChild(item);
+    }
+    this._renderMultiSelectButton(wrap);
+  }
+
+  _renderMultiSelectButton(wrap) {
+    const count = (this._filters[wrap._field] || []).length;
+    wrap._button.textContent = count ? `${wrap._label} (${count})` : wrap._label;
+    wrap._button.classList.toggle('active', count > 0);
+  }
+
+  //: Re-syncs a popover's checkboxes and button label to whatever
+  //: `this._filters[field]` already holds - used by _resetFilters and _drillDown,
+  //: which both change filter state from outside the checkbox click handler above.
+  _syncMultiSelect(wrap) {
+    for (const checkbox of wrap._menu.querySelectorAll('input[type="checkbox"]')) {
+      checkbox.checked = (this._filters[wrap._field] || []).includes(checkbox.value);
+    }
+    this._renderMultiSelectButton(wrap);
   }
 
   _resetFilters() {
     this._filters = { source_uuids: [], subject_refs: [], rule_uuids: [], range: '7d' };
-    for (const key of ['sourceSelect', 'subjectSelect', 'ruleSelect']) this._els[key].value = [];
+    for (const key of ['sourceSelect', 'subjectSelect', 'ruleSelect']) this._syncMultiSelect(this._els[key]);
     this._els.rangeSelect.value = '7d';
     this._clearDrillDown();
     this._reload();
@@ -471,9 +552,9 @@ class PurrviewEventsCard extends HTMLElement {
   async _loadFacets() {
     try {
       const facets = await this._hass.callApi('GET', `purrview/${this._config.entry_id}/event-facets`);
-      this._fillOptions(this._els.sourceSelect, facets?.sources || []);
-      this._fillOptions(this._els.subjectSelect, facets?.subjects || []);
-      this._fillOptions(this._els.ruleSelect, facets?.rules || []);
+      this._renderMultiSelectOptions(this._els.sourceSelect, facets?.sources || []);
+      this._renderMultiSelectOptions(this._els.subjectSelect, facets?.subjects || []);
+      this._renderMultiSelectOptions(this._els.ruleSelect, facets?.rules || []);
       // The event payload itself carries ruleName but only sourceUuid, not a camera
       // name (WatchEventRead has no source_name field) - facets is the only place
       // that name lives, so the tile caption looks it up from here.
@@ -481,14 +562,6 @@ class PurrviewEventsCard extends HTMLElement {
     } catch (err) {
       this._setStatus(`Could not load filters. (${err.message || err})`, true);
     }
-  }
-
-  _fillOptions(selector, options) {
-    const current = selector.value || [];
-    selector.selector = {
-      select: { multiple: true, mode: 'dropdown', options: options.map((o) => ({ value: o.ref, label: o.name })) },
-    };
-    selector.value = current;
   }
 
   async _loadEvents({ reset }) {
@@ -711,8 +784,8 @@ class PurrviewEventsCard extends HTMLElement {
     this._filters.rule_uuids = !lane.subjectRef && lane.ruleUuid ? [lane.ruleUuid] : [];
     this._filters.explicitStart = new Date(clampedStart).toISOString();
     this._filters.explicitEnd = new Date(bucketStartMs + bucketMs).toISOString();
-    this._els.subjectSelect.value = this._filters.subject_refs;
-    this._els.ruleSelect.value = this._filters.rule_uuids;
+    this._syncMultiSelect(this._els.subjectSelect);
+    this._syncMultiSelect(this._els.ruleSelect);
     this._setView('grid');
     this._loadEvents({ reset: true });
   }
