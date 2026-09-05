@@ -124,6 +124,22 @@ const STYLE = `
     background: var(--primary-color, #03a9f4); cursor: pointer; padding: 0;
   }
   .tl-mark:hover { outline: 1px solid var(--primary-text-color); }
+
+  /* A single shared popup, not one per mark - positioned via getBoundingClientRect
+     at show time, the same "one instance for the whole page" approach the app's own
+     mark-hover preview uses (nvr/events/timeline.js's createMarkPreview). */
+  .tl-preview {
+    position: fixed; z-index: 20; pointer-events: none; max-width: 150px;
+    background: var(--card-background-color); border: 1px solid var(--divider-color);
+    border-radius: 8px; padding: 6px; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+    transform: translate(-50%, calc(-100% - 10px));
+  }
+  .tl-preview[hidden] { display: none; }
+  .tl-preview-caption { font-size: 0.72em; color: var(--primary-text-color); white-space: nowrap; }
+  .tl-preview img {
+    display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 4px;
+    margin-top: 4px; background: #111;
+  }
 `;
 
 function fmtWhen(iso) {
@@ -270,6 +286,9 @@ class PurrviewEventsCard extends HTMLElement {
 
   disconnectedCallback() {
     this._connected = false;
+    // A fixed-position popup outlives the card visually (it's not a descendant in
+    // the layout sense) if the card is torn down while a mark is still hovered.
+    if (this._els) this._hideMarkPreview();
   }
 
   async _init() {
@@ -356,7 +375,10 @@ class PurrviewEventsCard extends HTMLElement {
     lightbox.addEventListener('click', (ev) => {
       if (ev.target === lightbox) this._closeLightbox();
     });
-    root.append(style, card, lightbox);
+    const preview = document.createElement('div');
+    preview.className = 'tl-preview';
+    preview.hidden = true;
+    root.append(style, card, lightbox, preview);
 
     this._els = {
       title,
@@ -369,6 +391,7 @@ class PurrviewEventsCard extends HTMLElement {
       grid,
       loadMore,
       timelineWrap,
+      preview,
       timelineBody,
       viewGridBtn,
       viewTimelineBtn,
@@ -420,6 +443,7 @@ class PurrviewEventsCard extends HTMLElement {
     this._els.timelineWrap.hidden = view !== 'timeline';
     this._els.viewGridBtn.classList.toggle('active', view === 'grid');
     this._els.viewTimelineBtn.classList.toggle('active', view === 'timeline');
+    this._hideMarkPreview();
     if (view === 'timeline') this._loadTimeline();
   }
 
@@ -526,6 +550,10 @@ class PurrviewEventsCard extends HTMLElement {
     if (this._loadingTimeline) return;
     this._loadingTimeline = true;
     this._setStatus('Loading…');
+    // Cached preview events are only valid for the filters they were fetched
+    // under - a lane's key (subject/rule) is stable across a reload, but a
+    // changed camera filter can change *which* event is representative within it.
+    this._previewCache = new Map();
 
     try {
       const params = this._filterParams();
@@ -660,8 +688,10 @@ class PurrviewEventsCard extends HTMLElement {
       mark.style.left = `${((t - start) / span) * 100}%`;
       mark.style.width = `${Math.max((bucketMs / span) * 100, 0.6)}%`;
       mark.style.opacity = String(0.35 + 0.65 * (markCount / peak));
-      const when = new Date(t).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-      mark.title = `${lane.label} — ${markCount} event${markCount === 1 ? '' : 's'} — ${when}`;
+      // No native `title` tooltip here - it would show up alongside the richer
+      // hover preview below and fight it for the pointer's attention.
+      mark.addEventListener('mouseenter', () => this._scheduleMarkPreview(mark, lane, t, markCount, bucketMs));
+      mark.addEventListener('mouseleave', () => this._hideMarkPreview());
       mark.addEventListener('click', () => this._drillDown(lane, t, bucketMs));
       track.appendChild(mark);
     }
@@ -671,10 +701,8 @@ class PurrviewEventsCard extends HTMLElement {
   }
 
   //: Jumps to the grid, pre-filtered to this lane and narrowed to exactly the
-  //: clicked bucket's window - the timeline's only form of "drill down," since
-  //: there is no separate modal here (unlike the app's own hover-preview + click-to-
-  //: expand-in-place, which needs a canvas-free page's worth of extra machinery this
-  //: card's dashboard-glance scope doesn't warrant).
+  //: clicked bucket's window - the timeline's own click-to-expand-in-place isn't
+  //: worth building here (that needs a modal), and the grid already has a lightbox.
   _drillDown(lane, bucketStartMs, bucketMs) {
     // The first bucket of a windowed range is partial (see _timelineRange) - clamp
     // up to the range's real cutoff so this doesn't pull in events from before it.
@@ -687,6 +715,93 @@ class PurrviewEventsCard extends HTMLElement {
     this._els.ruleSelect.value = this._filters.rule_uuids;
     this._setView('grid');
     this._loadEvents({ reset: true });
+  }
+
+  //: Dwell-triggered, not instant - a pointer merely passing over a dense run of
+  //: marks (very possible; marks can be a fraction of a percent wide) must not fire
+  //: a fetch per mark, only the one a viewer actually pauses on. 180ms matches the
+  //: app's own mark-hover preview (nvr/events/timeline.js).
+  _scheduleMarkPreview(markEl, lane, bucketStartMs, markCount, bucketMs) {
+    clearTimeout(this._previewTimer);
+    this._previewTimer = setTimeout(
+      () => this._showMarkPreview(markEl, lane, bucketStartMs, markCount, bucketMs),
+      180
+    );
+  }
+
+  _hideMarkPreview() {
+    clearTimeout(this._previewTimer);
+    this._previewToken = (this._previewToken || 0) + 1;
+    this._els.preview.hidden = true;
+  }
+
+  async _showMarkPreview(markEl, lane, bucketStartMs, markCount, bucketMs) {
+    const token = (this._previewToken = (this._previewToken || 0) + 1);
+    const cacheKey = `${lane.key}|${bucketStartMs}`;
+    this._previewCache = this._previewCache || new Map();
+    let event = this._previewCache.get(cacheKey);
+    if (event === undefined) {
+      event = await this._fetchPreviewEvent(lane, bucketStartMs, bucketMs);
+      this._previewCache.set(cacheKey, event);
+    }
+    // The pointer may have already left this mark (or hovered a different one)
+    // while that request was in flight - a stale result must not clobber whatever
+    // the popup is showing, or not showing, by the time it comes back.
+    if (token !== this._previewToken) return;
+    this._renderMarkPreview(markEl, lane, bucketStartMs, markCount, event, token);
+  }
+
+  //: One representative event for this lane+bucket, fetched lazily - the histogram
+  //: only ever gave a count, never the events behind it (same reasoning
+  //: media_source.py's own group/day drill-down keeps to counts until a leaf).
+  async _fetchPreviewEvent(lane, bucketStartMs, bucketMs) {
+    try {
+      // Starts from the timeline's own active filters (camera, in particular -
+      // lanes are already computed under it) and narrows further to this one
+      // lane+bucket, rather than re-deriving the camera filter from scratch.
+      const params = this._filterParams();
+      params.delete('start_from');
+      params.delete('start_to');
+      params.set('limit', '1');
+      if (lane.subjectRef) params.set('subject_refs', lane.subjectRef);
+      else if (lane.ruleUuid) params.set('rule_uuids', lane.ruleUuid);
+      params.set('start_from', new Date(bucketStartMs).toISOString());
+      params.set('start_to', new Date(bucketStartMs + bucketMs).toISOString());
+      const data = await this._hass.callApi('GET', `purrview/${this._config.entry_id}/events?${params.toString()}`);
+      return data?.events?.[0] || null;
+    } catch {
+      return null;
+    }
+  }
+
+  _renderMarkPreview(markEl, lane, bucketStartMs, markCount, event, token) {
+    const { preview } = this._els;
+    preview.innerHTML = '';
+
+    const when = new Date(bucketStartMs).toLocaleString([], {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    const caption = document.createElement('div');
+    caption.className = 'tl-preview-caption';
+    caption.textContent = `${lane.label} — ${markCount} event${markCount === 1 ? '' : 's'} — ${when}`;
+    preview.appendChild(caption);
+
+    if (event && (event.hasSnapshot || event.hasCrop)) {
+      const img = document.createElement('img');
+      preview.appendChild(img);
+      const kind = event.hasCrop ? 'crop' : 'snapshot';
+      signPath(this._hass, `/api/purrview/${this._config.entry_id}/${kind}/${event.uuid}`, 30).then((signed) => {
+        if (signed && token === this._previewToken) img.src = signed;
+      });
+    }
+
+    const rect = markEl.getBoundingClientRect();
+    preview.style.left = `${rect.left + rect.width / 2}px`;
+    preview.style.top = `${rect.top}px`;
+    preview.hidden = false;
   }
 
   _tile(event) {
