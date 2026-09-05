@@ -39,15 +39,7 @@ _VIEW_REGISTERED_KEY = "_view_registered"
 
 _WWW_DIR = Path(__file__).parent / "www"
 _STATIC_URL_PATH = "/purrview_files"
-_CARD_URLS = (
-    f"{_STATIC_URL_PATH}/purrview-card.js",
-    f"{_STATIC_URL_PATH}/purrview-events-card.js",
-    # Deliberately last and tiny - see purrview-heal.js's own docstring. It has no
-    # dependency on the two card files above finishing (or even starting) their own
-    # load, by design: it needs to win its own race independently of whatever might
-    # be starving them.
-    f"{_STATIC_URL_PATH}/purrview-heal.js",
-)
+_CARD_URLS = (f"{_STATIC_URL_PATH}/purrview-card.js", f"{_STATIC_URL_PATH}/purrview-events-card.js")
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
