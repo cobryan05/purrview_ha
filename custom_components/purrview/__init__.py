@@ -21,6 +21,12 @@ from homeassistant.core import HomeAssistant
 
 from .api import PurrViewClient, configured_clients
 from .const import CONF_TOKEN, DOMAIN
+from .events import (
+    PurrViewEventFacetsView,
+    PurrViewEventGroupsView,
+    PurrViewEventHistogramView,
+    PurrViewEventsView,
+)
 from .live_preview import PurrViewLivePreviewView
 from .proxy import PurrViewMediaProxyView
 from .services import SERVICE_FLAG_EVENT, async_register_services
@@ -33,7 +39,7 @@ _VIEW_REGISTERED_KEY = "_view_registered"
 
 _WWW_DIR = Path(__file__).parent / "www"
 _STATIC_URL_PATH = "/purrview_files"
-_CARD_URL = f"{_STATIC_URL_PATH}/purrview-card.js"
+_CARD_URLS = (f"{_STATIC_URL_PATH}/purrview-card.js", f"{_STATIC_URL_PATH}/purrview-events-card.js")
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -52,15 +58,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.http.register_view(PurrViewMediaProxyView(hass))
         hass.http.register_view(PurrViewLivePreviewView(hass))
         hass.http.register_view(PurrViewWatchProfilesView(hass))
+        hass.http.register_view(PurrViewEventsView(hass))
+        hass.http.register_view(PurrViewEventFacetsView(hass))
+        hass.http.register_view(PurrViewEventGroupsView(hass))
+        hass.http.register_view(PurrViewEventHistogramView(hass))
         # cache_headers=False: an unversioned URL that could otherwise leave a viewer
         # stuck on a stale card after an update until they hard-refresh.
         await hass.http.async_register_static_paths(
             [StaticPathConfig(_STATIC_URL_PATH, str(_WWW_DIR), cache_headers=False)]
         )
-        # Auto-registers the card as a Lovelace resource for every dashboard - the
-        # viewer never has to add "purrview-card.js" under Settings > Dashboards >
-        # Resources by hand.
-        add_extra_js_url(hass, _CARD_URL)
+        # Auto-registers both cards as Lovelace resources for every dashboard - the
+        # viewer never has to add them under Settings > Dashboards > Resources by hand.
+        for card_url in _CARD_URLS:
+            add_extra_js_url(hass, card_url)
         domain_data[_VIEW_REGISTERED_KEY] = True
 
     # Re-registering on every entry is harmless (see async_register_services), so

@@ -18,15 +18,33 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .const import DOMAIN
 
 
-def _query_params(filters: dict[str, Any]) -> dict[str, Any]:
-    """Drop unset filters and stringify datetimes.
+def _stringify(value: Any) -> Any:
+    return value.isoformat() if isinstance(value, datetime) else value
+
+
+def _query_params(filters: dict[str, Any]) -> list[tuple[str, Any]]:
+    """Drop unset filters, stringify datetimes, and repeat the key for a list value.
 
     aiohttp would otherwise str() a datetime as "2026-09-04 12:00:00+00:00" - valid to
     Python, but not the canonical isoformat FastAPI's own parsing is guaranteed to
     accept. None values are dropped rather than sent as the literal string "None",
     which is how an optional UI filter (e.g. "any camera") gets composed here.
+
+    A list of tuples, not a dict - `WatchEventQuery`'s multi-select filters
+    (`source_uuids`, `rule_uuids`, ...) are FastAPI `Query(None)` lists, which read
+    off *repeated* query keys (`?source_uuids=a&source_uuids=b`), not one key holding
+    a comma-joined string. A dict can only hold one value per key, so a list-valued
+    filter here is expanded into one tuple per item instead.
     """
-    return {k: (v.isoformat() if isinstance(v, datetime) else v) for k, v in filters.items() if v is not None}
+    params: list[tuple[str, Any]] = []
+    for key, value in filters.items():
+        if value is None:
+            continue
+        if isinstance(value, (list, tuple)):
+            params.extend((key, _stringify(item)) for item in value)
+        else:
+            params.append((key, _stringify(value)))
+    return params
 
 
 class PurrViewApiError(Exception):
@@ -94,8 +112,8 @@ class PurrViewClient:
         this file does not have to know every filter PurrView adds in the future.
         """
         params = _query_params(filters)
-        params["limit"] = limit
-        params["offset"] = offset
+        params.append(("limit", limit))
+        params.append(("offset", offset))
         data = await self._request_json("GET", "/api/watch-events", params=params)
         return data.get("events", []), data.get("total", 0)
 
@@ -118,7 +136,7 @@ class PurrViewClient:
         rather than re-aggregating hours that were never returned.
         """
         params = _query_params(filters)
-        params["bucket"] = bucket
+        params.append(("bucket", bucket))
         data = await self._request_json("GET", "/api/watch-events/histogram", params=params)
         return data.get("bucket", bucket), data.get("buckets", [])
 
@@ -206,7 +224,7 @@ class PurrViewClient:
 
         params = _query_params({"source_uuid": source_uuid, "since_seq": since_seq, "quality": quality})
         if full:
-            params["full"] = "true"
+            params.append(("full", "true"))
         data = await self._request_json("GET", f"/api/tasks/instances/{match['taskUuid']}/live-preview", params=params)
         return data.get("preview")
 

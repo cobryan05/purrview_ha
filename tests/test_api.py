@@ -98,6 +98,17 @@ class TestListEvents:
         assert url.query["offset"] == "100"
         assert url.query["source_uuid"] == "src-1"
 
+    async def test_a_list_filter_is_sent_as_repeated_query_keys(self, hass, aioclient_mock):
+        """A multi-select filter (source_uuids=[...]) must hit the wire as one repeated
+        key per item (?source_uuids=a&source_uuids=b), not a comma-joined string -
+        that's the shape WatchEventQuery's own Query(None) list params parse."""
+        aioclient_mock.get(f"{BASE}/api/watch-events", json={"status": "success", "events": [], "total": 0})
+
+        await _client(hass).list_events(source_uuids=["s1", "s2"])
+
+        _, url, _, _ = aioclient_mock.mock_calls[-1]
+        assert url.query.getall("source_uuids") == ["s1", "s2"]
+
     async def test_none_filters_are_dropped_not_sent_as_the_string_none(self, hass, aioclient_mock):
         """A caller building filters from optional UI state (e.g. no camera selected)
         passes None for the ones that are not set - those must not become a literal
