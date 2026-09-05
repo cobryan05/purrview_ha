@@ -46,7 +46,7 @@ const STYLE = `
   .status--error { color: var(--error-color, #db4437); }
   .controls {
     display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center;
-    padding: 6px 12px; border-top: 1px solid var(--divider-color);
+    padding: 6px 12px; border-bottom: 1px solid var(--divider-color);
   }
   .controls label { display: flex; align-items: center; gap: 4px; font-size: 0.85em; cursor: pointer; }
   select { font-size: 0.85em; }
@@ -145,6 +145,13 @@ class PurrviewCard extends HTMLElement {
     sourceSelect.addEventListener('change', () => {
       this._sourceUuid = sourceSelect.value;
       this._sinceSeq = null;
+      // Nothing else clears `_image` between here and the next successful apply -
+      // without this, a slow-cadence source (Ring/ring-mqtt in particular, tens of
+      // seconds between real snapshots) kept showing the *previous* camera's photo
+      // under the new selection for however long that gap turned out to be.
+      this._image = null;
+      this._preview = null;
+      this._draw();
       this._poll({ immediate: true });
     });
     controls.appendChild(sourceSelect);
@@ -167,7 +174,7 @@ class PurrviewCard extends HTMLElement {
       controls.appendChild(wrapper);
     }
 
-    card.append(wrap, status, controls);
+    card.append(controls, wrap, status);
     root.append(style, card);
 
     this._els = { canvas, placeholder, status, controls, sourceSelect, card };
@@ -201,7 +208,12 @@ class PurrviewCard extends HTMLElement {
       return;
     }
     if (this._inFlight) {
-      this._scheduleNext();
+      // A switch mid-flight must not sit out the rest of the normal 1s cadence on
+      // top of whatever's left of the current request - that's exactly the delay
+      // that left the previous camera's photo on screen. Remembered instead, and
+      // fired the moment the in-flight request clears, rather than scheduled here.
+      if (immediate) this._pendingImmediate = true;
+      else this._scheduleNext();
       return;
     }
     this._inFlight = true;
@@ -225,7 +237,12 @@ class PurrviewCard extends HTMLElement {
       this._setStatus(`Could not reach PurrView — retrying. (${err.message || err})`, true);
     } finally {
       this._inFlight = false;
-      this._scheduleNext();
+      if (this._pendingImmediate) {
+        this._pendingImmediate = false;
+        this._poll({ immediate: true });
+      } else {
+        this._scheduleNext();
+      }
     }
   }
 
