@@ -1054,6 +1054,11 @@ class PurrviewEventsCard extends HTMLElement {
       if (signed && token === this._lightboxToken) {
         const video = document.createElement('video');
         video.controls = true;
+        // Browsers block non-muted autoplay outright - without this, the video sat
+        // paused on its very first frame, indistinguishable from a still image,
+        // found live rather than by reading the code (controls were there, just
+        // never seemed worth reaching for on what looked like a static photo).
+        video.muted = true;
         video.autoplay = true;
         video.src = signed;
         inner.appendChild(video);
