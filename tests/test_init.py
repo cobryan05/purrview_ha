@@ -6,7 +6,7 @@ from homeassistant.components.frontend import DATA_EXTRA_MODULE_URL
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.purrview import _CARD_URL, async_setup_entry, async_unload_entry
+from custom_components.purrview import _CARD_URLS, async_setup_entry, async_unload_entry
 from custom_components.purrview.api import PurrViewClient
 from custom_components.purrview.const import CONF_TOKEN, DOMAIN
 from custom_components.purrview.services import SERVICE_FLAG_EVENT
@@ -69,16 +69,18 @@ class TestSetup:
         await async_setup_entry(hass, _entry(hass, "entry-2", {**DATA, "host": "192.168.1.60"}))
 
         urls = hass.data[DATA_EXTRA_MODULE_URL]
-        assert list(urls).count(_CARD_URL) == 1
+        for card_url in _CARD_URLS:
+            assert list(urls).count(card_url) == 1
 
     async def test_serves_the_card_file_through_the_static_path(self, hass, hass_client):
         await async_setup_entry(hass, _entry(hass))
         client = await hass_client()
 
-        resp = await client.get(_CARD_URL)
+        for card_url in _CARD_URLS:
+            resp = await client.get(card_url)
 
-        assert resp.status == 200
-        assert b"customElements.define" in await resp.read()
+            assert resp.status == 200
+            assert b"customElements.define" in await resp.read()
 
     async def test_registers_the_watch_profiles_view(self, hass):
         await async_setup_entry(hass, _entry(hass))
