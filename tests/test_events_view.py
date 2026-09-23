@@ -76,6 +76,16 @@ class TestEventsHappyPath:
 
         purrview_client.list_events.assert_awaited_once_with(limit=60, offset=0, rule_uuids=["r1"])
 
+    async def test_pinned_is_forwarded(self, hass, hass_client):
+        """The card's Pinned filter - `pinned` is on the single-value allowlist
+        alongside review_state, forwarded verbatim for PurrView's query param to parse."""
+        purrview_client = await _register(hass, events=[])
+        client = await hass_client()
+
+        await client.get("/api/purrview/entry-1/events?pinned=true")
+
+        purrview_client.list_events.assert_awaited_once_with(limit=60, offset=0, pinned="true")
+
 
 class TestEventsErrors:
     async def test_unknown_entry_id_is_404(self, hass, hass_client):

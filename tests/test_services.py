@@ -4,7 +4,7 @@ from homeassistant.exceptions import ServiceValidationError
 
 from custom_components.purrview.api import PurrViewClient
 from custom_components.purrview.const import DOMAIN
-from custom_components.purrview.services import SERVICE_FLAG_EVENT, async_register_services
+from custom_components.purrview.services import SERVICE_FLAG_EVENT, SERVICE_PIN_EVENT, async_register_services
 
 HOST = "192.168.1.50"
 PORT = 7999
@@ -42,6 +42,31 @@ class TestSingleInstance:
 
         _, _, data, _ = aioclient_mock.mock_calls[-1]
         assert data["metadataJson"]["flag"]["note"] == ""
+
+    async def test_flagged_false_unflags_instead_of_flagging(self, hass, aioclient_mock):
+        """The toggle path the Lovelace card's unflag click drives - flagged defaults to
+        True, so this only exercises correctly if the schema/handler actually thread
+        flagged=False through to the client rather than silently dropping it."""
+        _one_entry(hass)
+        aioclient_mock.get(
+            f"{BASE}/api/watch-events/e1",
+            json={
+                "status": "success",
+                "event": {"uuid": "e1", "metadataJson": {"flag": {"reason": "wrong_labels"}}},
+            },
+        )
+        aioclient_mock.patch(f"{BASE}/api/watch-events/e1", json={"status": "success"})
+
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE_FLAG_EVENT,
+            {"event_uuid": "e1", "reason": "wrong_labels", "flagged": False},
+            blocking=True,
+        )
+
+        _, _, data, _ = aioclient_mock.mock_calls[-1]
+        assert data["reviewState"] == "unreviewed"
+        assert "flag" not in data["metadataJson"]
 
 
 class TestMultipleInstances:
@@ -125,3 +150,29 @@ class TestSchemaValidation:
             pass
         else:
             raise AssertionError("expected a schema validation error")
+
+
+class TestPinEventService:
+    """purrview.pin_event. Instance resolution (single/multiple/none/config_entry_id)
+    is the same `_resolve_client` flag_event already exercises above - not repeated
+    here, since it does not vary by which service calls it."""
+
+    async def test_pinned_defaults_to_true_when_omitted(self, hass, aioclient_mock):
+        _one_entry(hass)
+        aioclient_mock.patch(f"{BASE}/api/watch-events/e1", json={"status": "success"})
+
+        await hass.services.async_call(DOMAIN, SERVICE_PIN_EVENT, {"event_uuid": "e1"}, blocking=True)
+
+        _, _, data, _ = aioclient_mock.mock_calls[-1]
+        assert data == {"pinned": True}
+
+    async def test_pinned_false_unpins(self, hass, aioclient_mock):
+        _one_entry(hass)
+        aioclient_mock.patch(f"{BASE}/api/watch-events/e1", json={"status": "success"})
+
+        await hass.services.async_call(
+            DOMAIN, SERVICE_PIN_EVENT, {"event_uuid": "e1", "pinned": False}, blocking=True
+        )
+
+        _, _, data, _ = aioclient_mock.mock_calls[-1]
+        assert data == {"pinned": False}

@@ -17,17 +17,29 @@ from .api import PurrViewApiError, PurrViewClient, configured_clients
 from .const import DOMAIN
 
 SERVICE_FLAG_EVENT = "flag_event"
+SERVICE_PIN_EVENT = "pin_event"
 
 ATTR_EVENT_UUID = "event_uuid"
 ATTR_REASON = "reason"
 ATTR_NOTE = "note"
 ATTR_CONFIG_ENTRY_ID = "config_entry_id"
+ATTR_PINNED = "pinned"
+ATTR_FLAGGED = "flagged"
 
 FLAG_EVENT_SCHEMA = vol.Schema(
     {
         vol.Required(ATTR_EVENT_UUID): cv.string,
         vol.Required(ATTR_REASON): cv.string,
         vol.Optional(ATTR_NOTE, default=""): cv.string,
+        vol.Optional(ATTR_FLAGGED, default=True): cv.boolean,
+        vol.Optional(ATTR_CONFIG_ENTRY_ID): cv.string,
+    }
+)
+
+PIN_EVENT_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_EVENT_UUID): cv.string,
+        vol.Optional(ATTR_PINNED, default=True): cv.boolean,
         vol.Optional(ATTR_CONFIG_ENTRY_ID): cv.string,
     }
 )
@@ -64,8 +76,18 @@ def async_register_services(hass: HomeAssistant) -> None:
                 call.data[ATTR_EVENT_UUID],
                 reason=call.data[ATTR_REASON],
                 note=call.data.get(ATTR_NOTE, ""),
+                flagged=call.data.get(ATTR_FLAGGED, True),
             )
         except PurrViewApiError as err:
             raise ServiceValidationError(str(err)) from err
 
     hass.services.async_register(DOMAIN, SERVICE_FLAG_EVENT, _handle_flag_event, schema=FLAG_EVENT_SCHEMA)
+
+    async def _handle_pin_event(call: ServiceCall) -> None:
+        client = _resolve_client(hass, call.data)
+        try:
+            await client.set_event_pinned(call.data[ATTR_EVENT_UUID], call.data[ATTR_PINNED])
+        except PurrViewApiError as err:
+            raise ServiceValidationError(str(err)) from err
+
+    hass.services.async_register(DOMAIN, SERVICE_PIN_EVENT, _handle_pin_event, schema=PIN_EVENT_SCHEMA)

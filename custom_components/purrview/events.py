@@ -24,7 +24,7 @@ _MULTI_FILTER_PARAMS = ("source_uuids", "rule_uuids", "subject_refs", "target_re
 #: Everything else the card is allowed to forward. Both of these are allowlists, not
 #: a passthrough of request.query - this view is reachable with only HA's own auth,
 #: not PurrView's, so it must not become a way to smuggle arbitrary query params.
-_SINGLE_FILTER_PARAMS = ("start_from", "start_to", "review_state")
+_SINGLE_FILTER_PARAMS = ("start_from", "start_to", "review_state", "pinned")
 
 _DEFAULT_LIMIT = 60
 

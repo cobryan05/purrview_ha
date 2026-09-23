@@ -135,12 +135,13 @@ const STYLE = `
   .lightbox video, .lightbox img { display: block; width: 100%; max-height: 70vh; background: #000; }
   .lightbox-caption { padding: 10px 14px; font-size: 0.9em; color: var(--primary-text-color); display: flex; justify-content: space-between; align-items: center; }
   .lightbox-close { cursor: pointer; background: none; border: none; font-size: 1.3em; color: var(--primary-text-color); }
-  .lightbox-actions { padding: 0 14px 12px; display: flex; justify-content: flex-end; }
+  .lightbox-actions { padding: 0 14px 12px; display: flex; justify-content: flex-end; gap: 8px; }
   .flag-btn {
     font-size: 0.8em; padding: 6px 10px; border-radius: 6px; cursor: pointer;
     border: 1px solid var(--divider-color); background: transparent; color: var(--primary-text-color);
   }
-  .flag-btn.flagged { color: var(--warning-color, #ff9800); border-color: var(--warning-color, #ff9800); cursor: default; }
+  .flag-btn.flagged { color: var(--warning-color, #ff9800); border-color: var(--warning-color, #ff9800); }
+  .flag-btn.pinned { color: var(--accent-color, #03a9f4); border-color: var(--accent-color, #03a9f4); }
   .flag-btn[disabled] { opacity: 0.6; cursor: default; }
 
   /* ---- timeline: one swimlane per subject/rule, plain absolutely-positioned marks
@@ -320,6 +321,9 @@ class PurrviewEventsCard extends HTMLElement {
       subject_refs: [...(config.default_subject_refs || [])],
       rule_uuids: [...(config.default_rule_uuids || [])],
       range: config.default_range || '7d',
+      // null means "pinned or not" - not part of card config, just live filter state,
+      // the same way review_state has no default_* config option either.
+      pinned: null,
     };
     this._filters = { ...this._defaultFilters };
     this._events = [];
@@ -432,12 +436,26 @@ class PurrviewEventsCard extends HTMLElement {
       this._reload();
     });
 
+    const pinnedSelect = document.createElement('select');
+    for (const [value, label] of [['', 'Pinned or not'], ['true', '📌 Pinned only'], ['false', 'Not pinned']]) {
+      const o = document.createElement('option');
+      o.value = value;
+      o.textContent = label;
+      pinnedSelect.appendChild(o);
+    }
+    pinnedSelect.value = this._filters.pinned == null ? '' : String(this._filters.pinned);
+    pinnedSelect.addEventListener('change', () => {
+      this._filters.pinned = pinnedSelect.value === '' ? null : pinnedSelect.value === 'true';
+      this._clearDrillDown();
+      this._reload();
+    });
+
     const reset = document.createElement('button');
     reset.className = 'reset';
     reset.textContent = 'Reset filters';
     reset.addEventListener('click', () => this._resetFilters());
 
-    filters.append(sourceSelect, subjectSelect, ruleSelect, rangeSelect, customStart, customEnd, reset);
+    filters.append(sourceSelect, subjectSelect, ruleSelect, rangeSelect, customStart, customEnd, pinnedSelect, reset);
 
     const views = document.createElement('div');
     views.className = 'views';
@@ -493,6 +511,7 @@ class PurrviewEventsCard extends HTMLElement {
       rangeSelect,
       customStart,
       customEnd,
+      pinnedSelect,
       status,
       gridWrap,
       grid,
@@ -607,6 +626,7 @@ class PurrviewEventsCard extends HTMLElement {
     this._els.customStart.hidden = this._filters.range !== 'custom';
     this._els.customEnd.value = '';
     this._els.customEnd.hidden = this._filters.range !== 'custom';
+    this._els.pinnedSelect.value = this._filters.pinned == null ? '' : String(this._filters.pinned);
     this._clearDrillDown();
     this._reload();
   }
@@ -652,6 +672,7 @@ class PurrviewEventsCard extends HTMLElement {
       const startFrom = rangeOpt?.startFrom();
       if (startFrom) params.set('start_from', startFrom.toISOString());
     }
+    if (this._filters.pinned != null) params.set('pinned', String(this._filters.pinned));
     return params;
   }
 
@@ -1025,6 +1046,12 @@ class PurrviewEventsCard extends HTMLElement {
     who.className = 'who';
     who.textContent = event.subjectName || event.eventLabel || 'Unknown';
     caption.appendChild(who);
+    if (event.pinned) {
+      const badge = document.createElement('span');
+      badge.className = 'badge';
+      badge.textContent = '📌 pinned';
+      caption.appendChild(badge);
+    }
     if (event.reviewState === 'flagged') {
       const badge = document.createElement('span');
       badge.className = 'badge';
@@ -1111,6 +1138,7 @@ class PurrviewEventsCard extends HTMLElement {
 
     const actions = document.createElement('div');
     actions.className = 'lightbox-actions';
+    actions.appendChild(this._pinButton(event));
     actions.appendChild(this._flagButton(event));
     inner.appendChild(actions);
 
@@ -1118,40 +1146,75 @@ class PurrviewEventsCard extends HTMLElement {
     lightbox.hidden = false;
   }
 
-  //: purrview.flag_event (services.py, WP-1) sets reviewState to "flagged" - the
-  //: same status the main app's own event detail modal uses for "labels were wrong"
-  //: (nvr/events/eventDetailModal.js). This card has no frame-correction tool of its
-  //: own; flagging just puts the event in that app's review queue for a human there.
+  //: purrview.pin_event toggles WatchEvent.pinned directly, so unlike flagging there
+  //: is no one-way terminal state here - the button always reflects and flips the
+  //: event's current pin, in either direction.
+  _pinButton(event) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'flag-btn';
+    const render = () => {
+      button.textContent = event.pinned ? '📌 Unpin' : 'Pin (protect from cleanup)';
+      button.classList.toggle('pinned', event.pinned);
+      button.disabled = false;
+    };
+    render();
+    button.addEventListener('click', async () => {
+      const next = !event.pinned;
+      button.disabled = true;
+      button.textContent = next ? 'Pinning…' : 'Unpinning…';
+      try {
+        await this._hass.callService('purrview', 'pin_event', {
+          event_uuid: event.uuid,
+          pinned: next,
+          config_entry_id: this._config.entry_id,
+        });
+        event.pinned = next;
+        render();
+      } catch (err) {
+        button.disabled = false;
+        button.textContent = `Could not update — retry (${err.message || err})`;
+      }
+    });
+    return button;
+  }
+
+  //: purrview.flag_event (services.py, WP-1) toggles reviewState between "flagged"
+  //: and "unreviewed" - the same "flagged" status the main app's own event detail
+  //: modal uses for "labels were wrong" (nvr/events/eventDetailModal.js). This card
+  //: has no frame-correction tool of its own; flagging just puts the event in that
+  //: app's review queue for a human there. Unflagging always lands on "unreviewed" -
+  //: flagging itself already discards whatever review_state came before it, so
+  //: there is no prior state to restore.
   _flagButton(event) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'flag-btn';
-    const setFlagged = () => {
-      button.textContent = 'Flagged for review ✓';
-      button.classList.add('flagged');
-      button.disabled = true;
+    const render = () => {
+      const flagged = event.reviewState === 'flagged';
+      button.textContent = flagged ? 'Flagged for review ✓ (click to unflag)' : 'Flag: wrong label';
+      button.classList.toggle('flagged', flagged);
+      button.disabled = false;
     };
-    if (event.reviewState === 'flagged') {
-      setFlagged();
-    } else {
-      button.textContent = 'Flag: wrong label';
-      button.addEventListener('click', async () => {
-        button.disabled = true;
-        button.textContent = 'Flagging…';
-        try {
-          await this._hass.callService('purrview', 'flag_event', {
-            event_uuid: event.uuid,
-            reason: 'wrong_label',
-            config_entry_id: this._config.entry_id,
-          });
-          event.reviewState = 'flagged';
-          setFlagged();
-        } catch (err) {
-          button.disabled = false;
-          button.textContent = `Could not flag — retry (${err.message || err})`;
-        }
-      });
-    }
+    render();
+    button.addEventListener('click', async () => {
+      const next = event.reviewState !== 'flagged';
+      button.disabled = true;
+      button.textContent = next ? 'Flagging…' : 'Unflagging…';
+      try {
+        await this._hass.callService('purrview', 'flag_event', {
+          event_uuid: event.uuid,
+          reason: 'wrong_label',
+          flagged: next,
+          config_entry_id: this._config.entry_id,
+        });
+        event.reviewState = next ? 'flagged' : 'unreviewed';
+        render();
+      } catch (err) {
+        button.disabled = false;
+        button.textContent = `Could not update — retry (${err.message || err})`;
+      }
+    });
     return button;
   }
 

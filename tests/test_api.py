@@ -256,3 +256,45 @@ class TestFlagEvent:
 
         _, _, data, _ = aioclient_mock.mock_calls[-1]
         assert data["metadataJson"] == {"flag": {"reason": "wrong_labels", "note": "", "source": "home_assistant"}}
+
+    async def test_unflagging_reverts_review_state_and_drops_flag_metadata(self, hass, aioclient_mock):
+        """flagged=False is the undo for an accidental flag click - review_state must
+        go back to "unreviewed", and the stale reason/note must not survive to be
+        inherited by a future re-flag."""
+        aioclient_mock.get(
+            f"{BASE}/api/watch-events/e1",
+            json={
+                "status": "success",
+                "event": {
+                    "uuid": "e1",
+                    "metadataJson": {"flag": {"reason": "wrong_labels", "note": "", "source": "home_assistant"}},
+                },
+            },
+        )
+        aioclient_mock.patch(f"{BASE}/api/watch-events/e1", json={"status": "success"})
+
+        await _client(hass).flag_event("e1", reason="wrong_labels", flagged=False)
+
+        _, _, data, _ = aioclient_mock.mock_calls[-1]
+        assert data["reviewState"] == "unreviewed"
+        assert "flag" not in data["metadataJson"]
+
+
+class TestSetEventPinned:
+    async def test_pinning_sends_a_bare_patch(self, hass, aioclient_mock):
+        """No read-modify-write like flag_event - pinned is its own column, not
+        something folded into metadata_json this call could clobber."""
+        aioclient_mock.patch(f"{BASE}/api/watch-events/e1", json={"status": "success"})
+
+        await _client(hass).set_event_pinned("e1", True)
+
+        _, _, data, _ = aioclient_mock.mock_calls[-1]
+        assert data == {"pinned": True}
+
+    async def test_unpinning_sends_pinned_false(self, hass, aioclient_mock):
+        aioclient_mock.patch(f"{BASE}/api/watch-events/e1", json={"status": "success"})
+
+        await _client(hass).set_event_pinned("e1", False)
+
+        _, _, data, _ = aioclient_mock.mock_calls[-1]
+        assert data == {"pinned": False}

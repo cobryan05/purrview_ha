@@ -147,8 +147,13 @@ class PurrViewClient:
             return None
         return data.get("event")
 
-    async def flag_event(self, event_uuid: str, reason: str, note: str = "") -> None:
+    async def flag_event(self, event_uuid: str, reason: str, note: str = "", flagged: bool = True) -> None:
         """WP-1: sets review_state to "flagged"; reason/note live under metadata_json.flag.
+
+        `flagged=False` reverses an accidental flag: review_state goes back to
+        "unreviewed" (there is no prior state to restore to - flagging already
+        discards whatever review_state held before it) and metadata_json.flag is
+        dropped so a re-flag doesn't inherit a stale reason/note.
 
         Read-modify-write, not a bare PATCH carrying only `metadataJson`: that field
         replaces the whole column server-side, and an event can already carry other
@@ -156,12 +161,27 @@ class PurrViewClient:
         """
         event = await self.get_event(event_uuid)
         metadata = dict((event or {}).get("metadataJson") or {})
-        metadata["flag"] = {"reason": reason, "note": note, "source": "home_assistant"}
+        if flagged:
+            metadata["flag"] = {"reason": reason, "note": note, "source": "home_assistant"}
+            review_state = "flagged"
+        else:
+            metadata.pop("flag", None)
+            review_state = "unreviewed"
         await self._request_json(
             "PATCH",
             f"/api/watch-events/{event_uuid}",
-            json={"reviewState": "flagged", "metadataJson": metadata},
+            json={"reviewState": review_state, "metadataJson": metadata},
         )
+
+    async def set_event_pinned(self, event_uuid: str, pinned: bool) -> None:
+        """Pin or unpin an event's video against PurrView's storage-quota/retention
+        cleanup, and against delete (single or bulk) until it is unpinned again.
+
+        Unlike `flag_event`, a plain PATCH is enough — `pinned` is a real top-level
+        column on the PurrView side (`WatchEvent.pinned`), not something folded into
+        `metadata_json`, so there is nothing else on the row this could clobber.
+        """
+        await self._request_json("PATCH", f"/api/watch-events/{event_uuid}", json={"pinned": pinned})
 
     async def list_watch_profiles(self) -> list[dict[str, Any]]:
         """Every configured watch profile, as `[{"uuid", "name", "enabled"}]`.

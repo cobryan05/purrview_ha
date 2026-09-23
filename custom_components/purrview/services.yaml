@@ -3,7 +3,8 @@ flag_event:
   description: >-
     Mark a PurrView event as having wrong labels, for later review in the app.
     Sets the event's review state to "flagged" and records the reason/note
-    under its metadata - see HA_INTEGRATION_PLAN.md WP-1.
+    under its metadata - see HA_INTEGRATION_PLAN.md WP-1. Call with
+    flagged: false to undo an accidental flag.
   fields:
     event_uuid:
       name: Event
@@ -18,20 +19,61 @@ flag_event:
         A short machine-readable reason. "wrong_labels" is what the future
         Lovelace card sends from its single "Labels wrong" button - this isn't
         a closed set on the PurrView side, so any short string is accepted.
+        Ignored when flagged is false.
       required: true
       example: wrong_labels
       selector:
         text:
     note:
       name: Note
-      description: Optional free-text detail about what was wrong.
+      description: Optional free-text detail about what was wrong. Ignored when flagged is false.
       required: false
       selector:
         text:
+    flagged:
+      name: Flagged
+      description: >-
+        True to flag (the default), false to unflag and return the event's
+        review state to "unreviewed".
+      required: false
+      default: true
+      selector:
+        boolean:
     config_entry_id:
       name: PurrView instance
       description: >-
         Which configured PurrView instance to flag the event on. Only needed
+        if more than one is configured.
+      required: false
+      selector:
+        config_entry:
+          integration: purrview
+
+pin_event:
+  name: Pin event
+  description: >-
+    Protect a PurrView event's video from being deleted by storage-quota eviction or
+    age-based retention cleanup, and from delete (single or bulk) until it is
+    unpinned again. Call with pinned: false to unpin.
+  fields:
+    event_uuid:
+      name: Event
+      description: The uuid of the PurrView watch event to pin or unpin.
+      required: true
+      example: "3f9c1e2a-6b7d-4e21-9b3a-8b1e2c4d5f60"
+      selector:
+        text:
+    pinned:
+      name: Pinned
+      description: True to pin (the default), false to unpin.
+      required: false
+      default: true
+      selector:
+        boolean:
+    config_entry_id:
+      name: PurrView instance
+      description: >-
+        Which configured PurrView instance to pin the event on. Only needed
         if more than one is configured.
       required: false
       selector:
