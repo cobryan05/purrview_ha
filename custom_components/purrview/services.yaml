@@ -79,3 +79,80 @@ pin_event:
       selector:
         config_entry:
           integration: purrview
+
+start_recording:
+  name: Start recording
+  description: >-
+    Record a camera now, with no rule behind it. The clip is saved as a manual
+    recording and appears in the Events view beside rule-driven ones. It stops
+    on its own at the watch profile's manual-recording cap, or when
+    purrview.stop_recording is called, whichever comes first.
+
+    On a Ring camera this holds the stream open: PurrView keeps analysing and
+    still raises its own events, but Ring's other clients (the Ring app, the
+    Home Assistant Ring integration, Frigate) see no motion from it until the
+    recording ends.
+  fields:
+    profile_uuid:
+      name: Watch profile
+      description: The uuid of the watch profile whose watcher holds this camera.
+      required: true
+      example: "3f9c1e2a-6b7d-4e21-9b3a-8b1e2c4d5f60"
+      selector:
+        text:
+    source_uuid:
+      name: Camera
+      description: The uuid of the source to record.
+      required: true
+      example: "7ca3e31a-c21e-4027-96d2-ae20fd705eea"
+      selector:
+        text:
+    max_duration_s:
+      name: Maximum duration
+      description: >-
+        Override the profile's cap for this one recording, in seconds. Omit to
+        use the profile's own default. Very short values are raised to the
+        watcher's floor rather than rejected.
+      required: false
+      example: 60
+      selector:
+        number:
+          min: 10
+          max: 3600
+          unit_of_measurement: s
+          mode: box
+    config_entry_id:
+      name: PurrView instance
+      description: Only needed when more than one PurrView instance is configured.
+      required: false
+      selector:
+        text:
+
+stop_recording:
+  name: Stop recording
+  description: >-
+    End a manual recording started by purrview.start_recording or by the
+    camera's recording switch, and cut the clip now. Does nothing if that
+    camera is not currently recording by hand - a rule-driven event is
+    unaffected.
+  fields:
+    profile_uuid:
+      name: Watch profile
+      description: The uuid of the watch profile whose watcher holds this camera.
+      required: true
+      example: "3f9c1e2a-6b7d-4e21-9b3a-8b1e2c4d5f60"
+      selector:
+        text:
+    source_uuid:
+      name: Camera
+      description: The uuid of the source to stop recording.
+      required: true
+      example: "7ca3e31a-c21e-4027-96d2-ae20fd705eea"
+      selector:
+        text:
+    config_entry_id:
+      name: PurrView instance
+      description: Only needed when more than one PurrView instance is configured.
+      required: false
+      selector:
+        text:

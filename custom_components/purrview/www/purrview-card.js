@@ -51,6 +51,14 @@ const STYLE = `
   }
   .controls label { display: flex; align-items: center; gap: 4px; font-size: 0.85em; cursor: pointer; }
   select { font-size: 0.85em; }
+  /* Pushed to the end of the row so the toggles keep their order as the card narrows. */
+  .record {
+    margin-left: auto; font-size: 0.85em; cursor: pointer;
+    background: none; color: var(--primary-text-color);
+    border: 1px solid var(--divider-color); border-radius: 4px; padding: 2px 10px;
+  }
+  .record[disabled] { opacity: 0.5; cursor: default; }
+  .record.recording { color: var(--error-color, #db4437); border-color: currentColor; }
   .placeholder {
     display: flex; align-items: center; justify-content: center; color: #888;
     aspect-ratio: 16 / 9; font-size: 0.9em;
@@ -175,10 +183,20 @@ class PurrviewCard extends HTMLElement {
       controls.appendChild(wrapper);
     }
 
+    // Record on demand. Calls the service rather than toggling the MQTT switch entity:
+    // the card knows a profile and a source uuid, not whichever entity id discovery gave
+    // that camera, and the service takes exactly those two.
+    const recordBtn = document.createElement('button');
+    recordBtn.className = 'record';
+    recordBtn.type = 'button';
+    recordBtn.textContent = 'Record';
+    recordBtn.addEventListener('click', () => this._toggleRecording());
+    controls.appendChild(recordBtn);
+
     card.append(controls, wrap, status);
     root.append(style, card);
 
-    this._els = { canvas, placeholder, status, controls, sourceSelect, card };
+    this._els = { canvas, placeholder, status, controls, sourceSelect, card, recordBtn };
     this._ctx = canvas.getContext('2d');
     this._built = true;
   }
@@ -268,6 +286,51 @@ class PurrviewCard extends HTMLElement {
     this._preview = preview;
     this._draw();
     this._renderStatus(preview);
+    this._syncRecordButton(preview.recording);
+  }
+
+  /**
+   * The Record button's label and state, taken from the poll.
+   *
+   * The watcher owns the cap, and the recording can also be ended from the app, from
+   * the MQTT switch, or by the cap itself — so the countdown is whatever the last poll
+   * said rather than a timer this card runs. Between polls the button is briefly stale;
+   * that is the correct trade against showing a confident number that is wrong.
+   */
+  _syncRecordButton(recording) {
+    const btn = this._els.recordBtn;
+    if (!btn) return;
+    const rec = recording || {};
+    btn.hidden = !rec.available;
+    btn.classList.toggle('recording', Boolean(rec.active));
+    if (rec.active) {
+      btn.textContent = `Stop (${Math.max(0, Math.round(rec.remainingS ?? 0))}s)`;
+      btn.title = 'Stop recording and cut the clip now.';
+    } else {
+      btn.textContent = 'Record';
+      btn.title = `Record this camera now, up to ${Math.round(rec.defaultMaxDurationS ?? 0)}s.`;
+    }
+  }
+
+  async _toggleRecording() {
+    if (!this._hass || !this._sourceUuid) return;
+    const active = Boolean(this._preview?.recording?.active);
+    const btn = this._els.recordBtn;
+    if (btn) btn.disabled = true;
+    try {
+      await this._hass.callService('purrview', active ? 'stop_recording' : 'start_recording', {
+        profile_uuid: this._config.profile_uuid,
+        source_uuid: this._sourceUuid,
+        ...(this._config.entry_id ? { config_entry_id: this._config.entry_id } : {}),
+      });
+      // Poll rather than assume: the service returns nothing useful, and the next frame
+      // carries the authoritative state including the cap the watcher settled on.
+      this._poll({ immediate: true });
+    } catch (err) {
+      this._els.status.textContent = `Could not change the recording: ${err.message || err}`;
+    } finally {
+      if (btn) btn.disabled = false;
+    }
   }
 
   _syncSources(sources) {

@@ -104,6 +104,17 @@ class PurrViewClient:
         data = await self._request_json("GET", "/api/watch-events/facets")
         return {key: data.get(key, []) for key in ("rules", "subjects", "targets", "sources")}
 
+    async def list_labels(self) -> list[dict[str, Any]]:
+        """The whole label tree, as `{uuid, name, color, parentUuid, ...}` rows.
+
+        The facets above name a subject/target by ref, and (bar motion zones, which
+        live in the watcher profile) every one of those refs is a label uuid. A ref on
+        its own says nothing about where it sits in the tree, so a filter bar that
+        wants to offer "any bowl" has to fetch the tree itself.
+        """
+        data = await self._request_json("GET", "/api/labels")
+        return data.get("labels", [])
+
     async def list_events(self, *, limit: int = 200, offset: int = 0, **filters: Any) -> tuple[list[dict], int]:
         """One page of `list_watch_events`, plus the total for that filter set.
 
@@ -269,6 +280,42 @@ class PurrViewClient:
             params.append(("full", "true"))
         data = await self._request_json("GET", f"/api/tasks/instances/{match['taskUuid']}/live-preview", params=params)
         return data.get("preview")
+
+    async def set_manual_recording(
+        self,
+        *,
+        profile_uuid: str,
+        source_uuid: str,
+        recording: bool,
+        max_duration_s: float | None = None,
+    ) -> bool:
+        """Start or stop a manual recording on one camera. False if nothing is watching it.
+
+        Routed through the watcher's command endpoint rather than a REST resource of its
+        own, because the recording is state held by the running task — there is nothing
+        to address when no watcher holds that source, and `False` says exactly that
+        rather than inventing an error for an idle camera.
+
+        `max_duration_s` is optional and the watcher clamps it; omitting it takes the
+        profile's own default, which is the common case and what the MQTT switch does.
+        """
+        tasks = await self.get_running_watcher_tasks()
+        match = next((t for t in tasks if t["profileUuid"] == profile_uuid), None)
+        if match is None:
+            return False
+        params: dict[str, Any] = {"sourceUuid": source_uuid}
+        if recording and max_duration_s:
+            params["maxDurationS"] = float(max_duration_s)
+        await self._request_json(
+            "POST",
+            "/api/tasks/instances/command",
+            json={
+                "taskUuid": match["taskUuid"],
+                "command": "start_recording" if recording else "stop_recording",
+                "params": params,
+            },
+        )
+        return True
 
 
 def configured_clients(hass: HomeAssistant) -> dict[str, PurrViewClient]:
