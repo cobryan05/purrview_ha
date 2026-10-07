@@ -75,6 +75,16 @@ const STYLE = `
     font-size: 0.85em; cursor: pointer; white-space: nowrap;
   }
   .multiselect-item:hover { background: var(--secondary-background-color, rgba(0, 0, 0, 0.06)); }
+  .multiselect-toggle {
+    display: flex; align-items: center; gap: 8px; padding: 6px 8px; margin-bottom: 4px;
+    font-size: 0.8em; cursor: pointer; white-space: nowrap; color: var(--secondary-text-color);
+    border-bottom: 1px solid var(--divider-color);
+  }
+  .multiselect-divider {
+    padding: 8px 8px 4px; margin-top: 4px; font-size: 0.75em; text-transform: uppercase;
+    letter-spacing: 0.04em; color: var(--secondary-text-color);
+    border-top: 1px solid var(--divider-color);
+  }
   .reset {
     font-size: 0.85em; padding: 6px 10px; border-radius: 6px; cursor: pointer;
     border: 1px solid var(--divider-color); background: transparent; color: var(--primary-text-color);
@@ -115,6 +125,12 @@ const STYLE = `
      visible effect and the thumbnail rendered stacked under "No image" forever
      (same bug purrview-card.js's own .placeholder[hidden] override exists for). */
   .tile img[hidden], .tile .no-thumb[hidden] { display: none; }
+  .tile .thumb { position: relative; }
+  .tile .duration {
+    position: absolute; right: 4px; bottom: 4px; pointer-events: none;
+    font-size: 0.7em; padding: 1px 5px; border-radius: 4px;
+    background: rgba(0, 0, 0, 0.72); color: #fff; font-variant-numeric: tabular-nums;
+  }
   .tile .caption { padding: 6px 8px; font-size: 0.78em; line-height: 1.3; }
   .tile .who { font-weight: 500; color: var(--primary-text-color); }
   .tile .meta { color: var(--secondary-text-color); display: block; }
@@ -198,15 +214,29 @@ function fmtWhen(iso) {
   return sameDay ? time : `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${time}`;
 }
 
-function playableRecordingUuid(event) {
+function playableRecording(event) {
   // Clip and timelapse are both video recordings the lightbox can play - only a bare
   // snapshot jpg can't be. Prefer a clip when both exist: it's the real-time footage,
   // not a compressed summary of it.
   const recordings = event.recordings || [];
   const byKind = Object.fromEntries(
-    recordings.filter((r) => r.status === 'complete').map((r) => [r.kind, r.uuid])
+    recordings.filter((r) => r.status === 'complete').map((r) => [r.kind, r])
   );
   return byKind.clip || byKind.timelapse || null;
+}
+
+//: The clip's own length, not endedAt - startedAt: extraction pads the event window
+//: with pre- and post-roll, so a 17s event routinely yields a 27s clip, and the number
+//: under a play button has to be the one the player will count down.
+function fmtDuration(seconds) {
+  if (!Number.isFinite(seconds)) return null;
+  const total = Math.round(seconds);
+  if (total <= 0) return null;
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const pad = (n) => String(n).padStart(2, '0');
+  return h ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
 }
 
 function parseEventDate(iso) {
@@ -308,6 +338,87 @@ async function signPath(hass, path, expires) {
   }
 }
 
+//: Which filter fields hold *label* refs, and where each one's "include child
+//: labels" toggle lives in the filter state. A camera and a rule are flat entities;
+//: a subject ref is (usually) a label uuid, and labels are a tree.
+const HIERARCHY_FIELDS = { subject_refs: 'subject_include_children' };
+
+/**
+ * One facet's refs arranged as the label tree, as `{ref, name, depth}` rows.
+ *
+ * Two things are not one-to-one with the facet list. **Ancestors are inserted even
+ * when nothing ever acted as one** - if only the four bowls have events, there is no
+ * `Bowl` row to tick and the roll-up has nothing to roll up to; with the toggle on,
+ * that row matches exactly the events its descendants hold. **Refs that are not
+ * labels at all** - a motion zone is named in the watcher profile, not the label tree
+ * - keep their facet name and sit under a divider.
+ *
+ * Mirrors `labelFacetItems` in the app's own nvr/events/filters.js, so the two
+ * controls mean the same thing in both places.
+ */
+function labelTreeItems(options, labels) {
+  if (!labels || !labels.size) return options.map((o) => ({ ref: o.ref, name: o.name, depth: 0 }));
+
+  const tree = new Map();
+  for (const { ref } of options) {
+    let label = labels.get(ref);
+    while (label && !tree.has(label.uuid)) {
+      const parent = label.parentUuid ? labels.get(label.parentUuid) : null;
+      // A dangling parentUuid - the parent was deleted - is re-rooted rather than
+      // left as is: the walk below only descends from null, so an orphan still
+      // naming a parent nothing holds would drop out of the list entirely.
+      tree.set(label.uuid, parent || !label.parentUuid ? label : { ...label, parentUuid: null });
+      label = parent;
+    }
+  }
+
+  const byParent = new Map();
+  for (const label of tree.values()) {
+    const key = label.parentUuid ?? null;
+    if (!byParent.has(key)) byParent.set(key, []);
+    byParent.get(key).push(label);
+  }
+  for (const children of byParent.values()) children.sort((a, b) => a.name.localeCompare(b.name));
+
+  const items = [];
+  const visit = (parentUuid, depth) => {
+    for (const label of byParent.get(parentUuid) || []) {
+      items.push({ ref: label.uuid, name: label.name, depth });
+      visit(label.uuid, depth + 1);
+    }
+  };
+  visit(null, 0);
+
+  const others = options.filter((o) => !labels.has(o.ref));
+  if (others.length) {
+    if (items.length) items.push({ isSeparator: true, name: 'Zones & other' });
+    for (const o of others) items.push({ ref: o.ref, name: o.name, depth: 0 });
+  }
+  return items;
+}
+
+/** `refs` plus every descendant of each, in the label tree. */
+function expandWithDescendants(refs, labels) {
+  if (!refs?.length || !labels?.size) return [...(refs || [])];
+  const byParent = new Map();
+  for (const label of labels.values()) {
+    const key = label.parentUuid ?? null;
+    if (!byParent.has(key)) byParent.set(key, []);
+    byParent.get(key).push(label);
+  }
+  const result = new Set(refs);
+  const queue = [...refs];
+  while (queue.length) {
+    for (const child of byParent.get(queue.shift()) || []) {
+      if (!result.has(child.uuid)) {
+        result.add(child.uuid);
+        queue.push(child.uuid);
+      }
+    }
+  }
+  return [...result];
+}
+
 class PurrviewEventsCard extends HTMLElement {
   setConfig(config) {
     if (!config?.entry_id) throw new Error('purrview-events-card: "entry_id" is required');
@@ -320,12 +431,21 @@ class PurrviewEventsCard extends HTMLElement {
       source_uuids: [...(config.default_source_uuids || [])],
       subject_refs: [...(config.default_subject_refs || [])],
       rule_uuids: [...(config.default_rule_uuids || [])],
+      // A roll-up widens a selection rather than being one, so it is not a filter in
+      // its own right - but it has to live here anyway, or "Reset filters" on a card
+      // built for "any bowl" would come back meaning "at the Tupperware".
+      subject_include_children: Boolean(config.default_subject_include_children),
       range: config.default_range || '7d',
       // null means "pinned or not" - not part of card config, just live filter state,
       // the same way review_state has no default_* config option either.
       pinned: null,
     };
     this._filters = { ...this._defaultFilters };
+    // The tree the Subject dropdown is drawn against, and the tree the roll-up walks.
+    // Empty until the first facets fetch lands, and empty again if it fails - in which
+    // case labelTreeItems leaves every ref flat, which is the old behaviour rather
+    // than a blank dropdown.
+    this._labels = new Map();
     this._events = [];
     this._total = 0;
     this._view = 'grid';
@@ -542,6 +662,7 @@ class PurrviewEventsCard extends HTMLElement {
   //: owns its checked state directly in `this._filters`, so there's nothing to
   //: reconcile with a black-box component's internal state.
   _makeMultiSelect(field, label) {
+    const hierarchyField = HIERARCHY_FIELDS[field] || null;
     const wrap = document.createElement('div');
     wrap.className = 'multiselect';
     const button = document.createElement('button');
@@ -559,6 +680,7 @@ class PurrviewEventsCard extends HTMLElement {
     wrap.append(button, menu);
     wrap._field = field;
     wrap._label = label;
+    wrap._hierarchyField = hierarchyField;
     wrap._button = button;
     wrap._menu = menu;
     wrap._options = [];
@@ -576,11 +698,26 @@ class PurrviewEventsCard extends HTMLElement {
   }
 
   _renderMultiSelectOptions(wrap, options) {
-    wrap._options = options;
+    const items = wrap._hierarchyField
+      ? labelTreeItems(options, this._labels)
+      : options.map((o) => ({ ref: o.ref, name: o.name, depth: 0 }));
+    wrap._options = items;
     wrap._menu.innerHTML = '';
-    for (const opt of options) {
+
+    if (wrap._hierarchyField) wrap._menu.appendChild(this._hierarchyToggle(wrap));
+
+    for (const opt of items) {
+      if (opt.isSeparator) {
+        const divider = document.createElement('div');
+        divider.className = 'multiselect-divider';
+        divider.textContent = opt.name;
+        wrap._menu.appendChild(divider);
+        continue;
+      }
       const item = document.createElement('label');
       item.className = 'multiselect-item';
+      // Inline rather than a depth class: the tree is as deep as the user made it.
+      if (opt.depth) item.style.paddingLeft = `${8 + opt.depth * 14}px`;
       const checkbox = document.createElement('input');
       checkbox.type = 'checkbox';
       checkbox.value = opt.ref;
@@ -600,6 +737,24 @@ class PurrviewEventsCard extends HTMLElement {
     this._renderMultiSelectButton(wrap);
   }
 
+  //: The "include child labels" row pinned to the top of an actor popover. It is not
+  //: one of the options, so it carries its own class: _syncMultiSelect and the option
+  //: loop both scope themselves to `.multiselect-item` to leave it alone.
+  _hierarchyToggle(wrap) {
+    const row = document.createElement('label');
+    row.className = 'multiselect-toggle';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = Boolean(this._filters[wrap._hierarchyField]);
+    checkbox.addEventListener('change', () => {
+      this._filters[wrap._hierarchyField] = checkbox.checked;
+      this._clearDrillDown();
+      this._reload();
+    });
+    row.append(checkbox, document.createTextNode('Include child labels'));
+    return row;
+  }
+
   _renderMultiSelectButton(wrap) {
     const count = (this._filters[wrap._field] || []).length;
     wrap._button.textContent = count ? `${wrap._label} (${count})` : wrap._label;
@@ -610,9 +765,11 @@ class PurrviewEventsCard extends HTMLElement {
   //: `this._filters[field]` already holds - used by _resetFilters and _drillDown,
   //: which both change filter state from outside the checkbox click handler above.
   _syncMultiSelect(wrap) {
-    for (const checkbox of wrap._menu.querySelectorAll('input[type="checkbox"]')) {
+    for (const checkbox of wrap._menu.querySelectorAll('.multiselect-item input[type="checkbox"]')) {
       checkbox.checked = (this._filters[wrap._field] || []).includes(checkbox.value);
     }
+    const toggle = wrap._menu.querySelector('.multiselect-toggle input[type="checkbox"]');
+    if (toggle) toggle.checked = Boolean(this._filters[wrap._hierarchyField]);
     this._renderMultiSelectButton(wrap);
   }
 
@@ -658,7 +815,12 @@ class PurrviewEventsCard extends HTMLElement {
   _filterParams() {
     const params = new URLSearchParams();
     for (const field of ['source_uuids', 'subject_refs', 'rule_uuids']) {
-      for (const value of this._filters[field] || []) params.append(field, value);
+      const refs = this._filters[field] || [];
+      // Expanded here rather than written back into `_filters`: the state is what the
+      // dropdown renders, so storing the closure would tick five bowls for one click.
+      const hierarchyField = HIERARCHY_FIELDS[field];
+      const values = hierarchyField && this._filters[hierarchyField] ? expandWithDescendants(refs, this._labels) : refs;
+      for (const value of values) params.append(field, value);
     }
     if (this._filters.explicitStart) {
       params.set('start_from', this._filters.explicitStart);
@@ -679,6 +841,8 @@ class PurrviewEventsCard extends HTMLElement {
   async _loadFacets() {
     try {
       const facets = await this._hass.callApi('GET', `purrview/${this._config.entry_id}/event-facets`);
+      // Before the options are rendered: the Subject rows are drawn against this tree.
+      this._labels = new Map((facets?.labels || []).map((l) => [l.uuid, l]));
       this._renderMultiSelectOptions(this._els.sourceSelect, facets?.sources || []);
       this._renderMultiSelectOptions(this._els.subjectSelect, facets?.subjects || []);
       this._renderMultiSelectOptions(this._els.ruleSelect, facets?.rules || []);
@@ -1016,6 +1180,10 @@ class PurrviewEventsCard extends HTMLElement {
     const tile = document.createElement('button');
     tile.className = 'tile';
 
+    const thumb = document.createElement('div');
+    thumb.className = 'thumb';
+    tile.appendChild(thumb);
+
     if (event.hasSnapshot || event.hasCrop) {
       const img = document.createElement('img');
       const kind = event.hasCrop ? 'crop' : 'snapshot';
@@ -1025,7 +1193,7 @@ class PurrviewEventsCard extends HTMLElement {
       const placeholder = document.createElement('div');
       placeholder.className = 'no-thumb';
       placeholder.textContent = 'No image';
-      tile.append(img, placeholder);
+      thumb.append(img, placeholder);
       signPath(this._hass, `/api/purrview/${this._config.entry_id}/${kind}/${event.uuid}`, 60).then((signed) => {
         if (!signed) return;
         img.src = signed;
@@ -1036,7 +1204,19 @@ class PurrviewEventsCard extends HTMLElement {
       const placeholder = document.createElement('div');
       placeholder.className = 'no-thumb';
       placeholder.textContent = 'No image';
-      tile.appendChild(placeholder);
+      thumb.appendChild(placeholder);
+    }
+
+    // Only a complete recording gets a length: an event still being extracted has no
+    // video to play yet, so an absent badge doubles as "nothing to play here".
+    const recording = playableRecording(event);
+    const length = recording ? fmtDuration(recording.durationS) : null;
+    if (length) {
+      const duration = document.createElement('span');
+      duration.className = 'duration';
+      duration.textContent = recording.kind === 'timelapse' ? `⏱ ${length}` : `▶ ${length}`;
+      duration.title = recording.kind === 'timelapse' ? `Timelapse, ${length}` : `Clip, ${length}`;
+      thumb.appendChild(duration);
     }
 
     const caption = document.createElement('div');
@@ -1092,7 +1272,7 @@ class PurrviewEventsCard extends HTMLElement {
     const inner = document.createElement('div');
     inner.className = 'lightbox-inner';
 
-    const recordingUuid = playableRecordingUuid(event);
+    const recordingUuid = playableRecording(event)?.uuid || null;
     if (recordingUuid) {
       // 300s, not the grid thumbnail's 60s - a clip can run longer than that between
       // opening the lightbox and finishing playback, and a scrub past that point would
@@ -1262,6 +1442,16 @@ const EDITOR_STYLE = `
     font-size: 0.85em; cursor: pointer; white-space: nowrap;
   }
   .multiselect-item:hover { background: var(--secondary-background-color, rgba(0, 0, 0, 0.06)); }
+  .multiselect-toggle {
+    display: flex; align-items: center; gap: 8px; padding: 6px 8px; margin-bottom: 4px;
+    font-size: 0.8em; cursor: pointer; white-space: nowrap; color: var(--secondary-text-color);
+    border-bottom: 1px solid var(--divider-color);
+  }
+  .multiselect-divider {
+    padding: 8px 8px 4px; margin-top: 4px; font-size: 0.75em; text-transform: uppercase;
+    letter-spacing: 0.04em; color: var(--secondary-text-color);
+    border-top: 1px solid var(--divider-color);
+  }
 `;
 
 //: Shared by every default-filter picker in the editor below - each just supplies
@@ -1271,7 +1461,7 @@ const EDITOR_STYLE = `
 //: `this._filters` on a PurrviewEventsCard instance directly, and adapting them to
 //: config-editing (undefined-when-empty, a different host class entirely) would cost
 //: more than this small standalone version.
-function buildEditorMultiSelect(label, getValues, setValues) {
+function buildEditorMultiSelect(label, getValues, setValues, hierarchy = null) {
   const wrap = document.createElement('div');
   wrap.className = 'multiselect';
   const button = document.createElement('button');
@@ -1291,11 +1481,30 @@ function buildEditorMultiSelect(label, getValues, setValues) {
     button.textContent = count ? `${label} (${count})` : label;
     button.classList.toggle('active', count > 0);
   }
-  wrap.renderOptions = (options) => {
+  wrap.renderOptions = (options, labels) => {
+    const items = hierarchy ? labelTreeItems(options, labels) : options.map((o) => ({ ref: o.ref, name: o.name, depth: 0 }));
     menu.innerHTML = '';
-    for (const opt of options) {
+    if (hierarchy) {
+      const row = document.createElement('label');
+      row.className = 'multiselect-toggle';
+      const toggle = document.createElement('input');
+      toggle.type = 'checkbox';
+      toggle.checked = Boolean(hierarchy.getValue());
+      toggle.addEventListener('change', () => hierarchy.setValue(toggle.checked));
+      row.append(toggle, document.createTextNode('Include child labels'));
+      menu.appendChild(row);
+    }
+    for (const opt of items) {
+      if (opt.isSeparator) {
+        const divider = document.createElement('div');
+        divider.className = 'multiselect-divider';
+        divider.textContent = opt.name;
+        menu.appendChild(divider);
+        continue;
+      }
       const item = document.createElement('label');
       item.className = 'multiselect-item';
+      if (opt.depth) item.style.paddingLeft = `${8 + opt.depth * 14}px`;
       const checkbox = document.createElement('input');
       checkbox.type = 'checkbox';
       checkbox.value = opt.ref;
@@ -1388,7 +1597,13 @@ class PurrviewEventsCardEditor extends HTMLElement {
     const subjectPicker = buildEditorMultiSelect(
       'Subject',
       () => this._config?.default_subject_refs,
-      (values) => this._updateConfig({ default_subject_refs: values.length ? values : undefined })
+      (values) => this._updateConfig({ default_subject_refs: values.length ? values : undefined }),
+      {
+        getValue: () => this._config?.default_subject_include_children,
+        // Written only when on: _updateConfig drops undefined keys, so the YAML of a
+        // card nobody has ticked this on stays as short as it was before.
+        setValue: (value) => this._updateConfig({ default_subject_include_children: value || undefined }),
+      }
     );
     const rulePicker = buildEditorMultiSelect(
       'Event type',
@@ -1451,8 +1666,9 @@ class PurrviewEventsCardEditor extends HTMLElement {
     this._facetsLoadedFor = entryId;
     try {
       const facets = await this._hass.callApi('GET', `purrview/${entryId}/event-facets`);
+      const labels = new Map((facets?.labels || []).map((l) => [l.uuid, l]));
       this._els.sourcePicker.renderOptions(facets?.sources || []);
-      this._els.subjectPicker.renderOptions(facets?.subjects || []);
+      this._els.subjectPicker.renderOptions(facets?.subjects || [], labels);
       this._els.rulePicker.renderOptions(facets?.rules || []);
     } catch {
       // Leave the pickers empty - a facets fetch failing (PurrView unreachable while

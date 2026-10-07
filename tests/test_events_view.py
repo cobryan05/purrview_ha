@@ -11,7 +11,17 @@ from custom_components.purrview.const import DOMAIN
 from custom_components.purrview.events import PurrViewEventFacetsView, PurrViewEventsView
 
 
-async def _register(hass, *, events=None, total=None, facets=None, list_events_side_effect=None, facets_side_effect=None):
+async def _register(
+    hass,
+    *,
+    events=None,
+    total=None,
+    facets=None,
+    labels=None,
+    list_events_side_effect=None,
+    facets_side_effect=None,
+    labels_side_effect=None,
+):
     await async_setup_component(hass, "http", {})
     # spec=PurrViewClient - same reasoning as test_watch_profiles_view.py: a bare
     # MagicMock would still 404 through configured_clients()'s isinstance check.
@@ -24,6 +34,10 @@ async def _register(hass, *, events=None, total=None, facets=None, list_events_s
         client.get_facets = AsyncMock(side_effect=facets_side_effect)
     else:
         client.get_facets = AsyncMock(return_value=facets or {"rules": [], "subjects": [], "targets": [], "sources": []})
+    if labels_side_effect is not None:
+        client.list_labels = AsyncMock(side_effect=labels_side_effect)
+    else:
+        client.list_labels = AsyncMock(return_value=labels or [])
     hass.data[DOMAIN] = {"entry-1": client}
     hass.http.register_view(PurrViewEventsView(hass))
     hass.http.register_view(PurrViewEventFacetsView(hass))
@@ -124,6 +138,39 @@ class TestFacetsHappyPath:
 
         assert resp.status == 200
         assert (await resp.json())["rules"] == [{"ref": "r1", "name": "Intruder"}]
+
+
+class TestFacetsLabels:
+    """The label tree rides along with the facets so the card's Subject dropdown can
+    draw its refs as a tree and roll a parent up to its children."""
+
+    async def test_labels_are_returned_alongside_the_facets(self, hass, hass_client):
+        await _register(hass, labels=[{"uuid": "l1", "name": "Bowl", "parentUuid": None}])
+        client = await hass_client()
+
+        resp = await client.get("/api/purrview/entry-1/event-facets")
+
+        assert (await resp.json())["labels"] == [{"uuid": "l1", "name": "Bowl", "parentUuid": None}]
+
+    async def test_a_failed_label_fetch_still_serves_the_facets(self, hass, hass_client):
+        """Deliberately not the 502 a failed *facet* fetch gets: without the tree the
+        card falls back to a flat list of refs, which is a degraded filter bar rather
+        than no filter bar."""
+        from custom_components.purrview.api import PurrViewApiError
+
+        await _register(
+            hass,
+            facets={"rules": [{"ref": "r1", "name": "Intruder"}], "subjects": [], "targets": [], "sources": []},
+            labels_side_effect=PurrViewApiError("labels unavailable"),
+        )
+        client = await hass_client()
+
+        resp = await client.get("/api/purrview/entry-1/event-facets")
+
+        assert resp.status == 200
+        body = await resp.json()
+        assert body["labels"] == []
+        assert body["rules"] == [{"ref": "r1", "name": "Intruder"}]
 
 
 class TestFacetsErrors:

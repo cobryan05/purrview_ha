@@ -8,7 +8,7 @@ why a raw PurrView URL isn't an option: no auth, no LAN-independence).
 
 from __future__ import annotations
 
-from aiohttp import web
+from aiohttp import ClientError, web
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 
@@ -77,7 +77,12 @@ class PurrViewEventsView(HomeAssistantView):
 
 
 class PurrViewEventFacetsView(HomeAssistantView):
-    """`GET /api/purrview/{entry_id}/event-facets` -> `{rules, subjects, targets, sources}`."""
+    """`GET /api/purrview/{entry_id}/event-facets` -> `{rules, subjects, targets, sources, labels}`.
+
+    One request rather than two, because `labels` is not a separate resource as far as
+    the card is concerned: it is what turns a flat list of subject refs into the tree
+    the filter bar draws, and the bar cannot render either half without the other.
+    """
 
     url = "/api/purrview/{entry_id}/event-facets"
     name = "api:purrview:event-facets"
@@ -94,7 +99,15 @@ class PurrViewEventFacetsView(HomeAssistantView):
         except PurrViewApiError as err:
             raise web.HTTPBadGateway(reason=str(err)) from err
 
-        return self.json(facets)
+        # Not fatal, unlike the facets above: without the tree the card falls back to
+        # the flat list of refs it drew before, which is a degraded filter bar rather
+        # than no filter bar at all.
+        try:
+            labels = await client.list_labels()
+        except (PurrViewApiError, ClientError, TimeoutError):
+            labels = []
+
+        return self.json({**facets, "labels": labels})
 
 
 class PurrViewEventGroupsView(HomeAssistantView):
