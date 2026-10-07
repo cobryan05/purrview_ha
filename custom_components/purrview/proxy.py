@@ -22,6 +22,7 @@ from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
+from .api import rejected_credential
 from .const import DOMAIN
 
 #: Maps this view's `kind` segment to the PurrView endpoint it forwards to. Deliberately
@@ -78,8 +79,13 @@ class PurrViewMediaProxyView(HomeAssistantView):
 
         session = async_get_clientsession(self._hass)
         try:
+            # Redirects are not followed: PurrView's auth gate answers a page request
+            # with a 303 to its login form, and following that would stream the form's
+            # HTML into whatever <video> or <img> asked for this.
             upstream = await session.get(
-                f"{client.base_url}{path_template.format(uuid=uuid)}", headers=headers
+                f"{client.base_url}{path_template.format(uuid=uuid)}",
+                headers=headers,
+                allow_redirects=False,
             )
         except aiohttp.ClientError as err:
             raise web.HTTPBadGateway(reason="Could not reach PurrView") from err
@@ -87,6 +93,9 @@ class PurrViewMediaProxyView(HomeAssistantView):
         if upstream.status == 404:
             upstream.release()
             raise web.HTTPNotFound()
+        if rejected_credential(upstream):
+            upstream.release()
+            raise web.HTTPBadGateway(reason="PurrView refused the configured access token")
         if upstream.status not in (200, 206):
             upstream.release()
             raise web.HTTPBadGateway(reason=f"PurrView returned HTTP {upstream.status}")

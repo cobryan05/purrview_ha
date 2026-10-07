@@ -121,3 +121,40 @@ class TestRequiresAuth:
         resp = await client.get("/api/purrview/entry-1/recording/r1")
 
         assert resp.status == 401
+
+
+class TestRejectedCredential:
+    """PurrView's auth gate answers a non-HTML request with 401 and a page request with
+    a 303 to its login form. Neither is media, and the difference matters: a followed
+    redirect would stream the login page's HTML into a <video> element."""
+
+    async def test_a_login_redirect_is_not_followed_and_streamed_as_media(
+        self, hass, hass_client, aioclient_mock
+    ):
+        await _register(hass)
+        aioclient_mock.get(
+            f"{BASE}/api/watch-events/e1/snapshot",
+            status=303,
+            headers={"location": "/login?next=%2F"},
+            text="<html>login form</html>",
+        )
+        client = await hass_client()
+
+        resp = await client.get("/api/purrview/entry-1/snapshot/e1")
+
+        assert resp.status == 502
+        assert "login form" not in await resp.text()
+
+    async def test_a_rejected_token_says_so_rather_than_naming_a_status(
+        self, hass, hass_client, aioclient_mock
+    ):
+        """"PurrView returned HTTP 401" reads as "PurrView is broken". The operator
+        needs to know it is the stored token that was refused."""
+        await _register(hass, token="stale")
+        aioclient_mock.get(f"{BASE}/api/recordings/e1/file", status=401)
+        client = await hass_client()
+
+        resp = await client.get("/api/purrview/entry-1/recording/e1")
+
+        assert resp.status == 502
+        assert "token" in (resp.reason or "").lower()

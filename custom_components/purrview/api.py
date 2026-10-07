@@ -51,6 +51,29 @@ class PurrViewApiError(Exception):
     """PurrView was reached, but answered with status == "failure"."""
 
 
+class PurrViewAuthError(PurrViewApiError):
+    """PurrView refused the credential this client holds.
+
+    A subclass, so the `except PurrViewApiError` handlers throughout this integration
+    keep catching it; distinguishable, so a caller that wants to say "re-enter the
+    token" can tell it apart from "PurrView rejected the request".
+    """
+
+
+#: Statuses PurrView's AuthGate answers a refused request with. A non-HTML caller gets
+#: a 401; a page request gets a 303 to the login form, which is why redirects are not
+#: followed below - following one hands `json()` a page of HTML.
+_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+
+
+def rejected_credential(resp: Any) -> bool:
+    if resp.status in (401, 403):
+        return True
+    if resp.status not in _REDIRECT_STATUSES:
+        return False
+    return "/login" in (resp.headers.get("location") or "")
+
+
 #: What get_running_watcher_tasks filters task-instance listings down to. Mirrors
 #: the app's own NVR pane (see WATCHER_TYPENAME / LIVE_STATUSES in
 #: apps/image_tagging_server/static/js/app/nvr/main.js) - a stopped watcher's
@@ -84,7 +107,14 @@ class PurrViewClient:
     async def _request_json(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         session = async_get_clientsession(self._hass)
         headers = {**self.auth_headers(), **kwargs.pop("headers", {})}
+        kwargs.setdefault("allow_redirects", False)
         async with session.request(method, f"{self.base_url}{path}", headers=headers, **kwargs) as resp:
+            if rejected_credential(resp):
+                raise PurrViewAuthError(
+                    "PurrView refused the configured access token"
+                    if self.token
+                    else "PurrView requires an access token and none is configured"
+                )
             resp.raise_for_status()
             data = await resp.json()
         # WP-1/2's response envelope is {"status": "success"|"failure", "message": ...}

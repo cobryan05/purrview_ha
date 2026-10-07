@@ -37,9 +37,14 @@ mode (steps 4-7) - much of its goal is already covered by WP-4's `media_source`
 browser, so what's left is narrower than originally scoped.
 
 On the main app side, WP-1 (flag backend), WP-2 (MQTT bridge + discovery, since widened
-well past its original spec), WP-3 (auth token, widened into an optional web-UI login
-too), and WP-6 (per-rule HA opt-out) are all done. See `HA_INTEGRATION_PLAN.md` for
-current status on every work package.
+well past its original spec), WP-3 (auth token, since split into an API token plus a
+separate optional web-UI login password), and WP-6 (per-rule HA opt-out) are all done.
+See `HA_INTEGRATION_PLAN.md` for current status on every work package.
+
+**This integration authenticates with the API token, never the login password.** The
+two are independent switches in PurrView's Settings → Security, and turning on *either*
+gates the whole app — so an install that sets only a password locks this integration
+out. Generate an API token as well and paste it into the config flow.
 
 ## Development
 

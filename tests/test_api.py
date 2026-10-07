@@ -4,7 +4,13 @@ aioclient_mock intercepts calls the same way test_config_flow.py's reachability 
 does - no real PurrView instance, matching this integration's existing test style.
 """
 
-from custom_components.purrview.api import PurrViewApiError, PurrViewClient
+import pytest
+
+from custom_components.purrview.api import (
+    PurrViewApiError,
+    PurrViewAuthError,
+    PurrViewClient,
+)
 
 HOST = "192.168.1.50"
 PORT = 7999
@@ -49,6 +55,25 @@ class TestFacets:
         assert facets["subjects"] == []
         assert facets["targets"] == []
         assert facets["sources"] == []
+
+
+class TestListLabels:
+    async def test_a_response_without_labels_is_an_empty_tree(self, hass, aioclient_mock):
+        """Same defensiveness as get_facets above: the card's Subject dropdown falls
+        back to a flat list of refs when the tree is empty, rather than raising."""
+        aioclient_mock.get(f"{BASE}/api/labels", json={"status": "success"})
+
+        assert await _client(hass).list_labels() == []
+
+    async def test_returns_the_label_rows(self, hass, aioclient_mock):
+        aioclient_mock.get(
+            f"{BASE}/api/labels",
+            json={"status": "success", "labels": [{"uuid": "l1", "name": "Bowl", "parentUuid": None}]},
+        )
+
+        labels = await _client(hass).list_labels()
+
+        assert [l["uuid"] for l in labels] == ["l1"]
 
 
 class TestListWatchProfiles:
@@ -298,3 +323,32 @@ class TestSetEventPinned:
 
         _, _, data, _ = aioclient_mock.mock_calls[-1]
         assert data == {"pinned": False}
+
+
+class TestRejectedCredential:
+    async def test_a_401_raises_an_auth_error_not_a_bare_transport_error(self, hass, aioclient_mock):
+        """Every caller already handles PurrViewApiError, so the auth case subclasses
+        it — but it has to be distinguishable, and its message has to name the token
+        rather than surfacing an opaque 401."""
+        aioclient_mock.get(f"{BASE}/api/labels", status=401)
+        client = _client(hass, token="stale")
+
+        with pytest.raises(PurrViewAuthError) as caught:
+            await client.list_labels()
+
+        assert isinstance(caught.value, PurrViewApiError)
+        assert "token" in str(caught.value).lower()
+
+    async def test_a_login_redirect_is_an_auth_error_not_a_json_decode_failure(self, hass, aioclient_mock):
+        """With a password set and no token configured, PurrView bounces us to its
+        login form. Following it would hand json() a page of HTML."""
+        aioclient_mock.get(
+            f"{BASE}/api/labels",
+            status=303,
+            headers={"location": "/login?next=%2F"},
+            text="<html>login form</html>",
+        )
+        client = _client(hass)
+
+        with pytest.raises(PurrViewAuthError):
+            await client.list_labels()
