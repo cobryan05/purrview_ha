@@ -63,4 +63,12 @@ have no build step sharing them and divergence fails silently.
 
 ## License
 
-Apache-2.0 — see [LICENSE](LICENSE).
+Copyright 2026 Chris OBryan
+
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) and
+[NOTICE](NOTICE). You may obtain a copy of the License at
+<http://www.apache.org/licenses/LICENSE-2.0>.
+
+Unless required by applicable law or agreed to in writing, software distributed
+under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+CONDITIONS OF ANY KIND, either express or implied.
