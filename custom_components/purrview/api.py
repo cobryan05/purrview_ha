@@ -117,7 +117,7 @@ class PurrViewClient:
                 )
             resp.raise_for_status()
             data = await resp.json()
-        # WP-1/2's response envelope is {"status": "success"|"failure", "message": ...}
+        # PurrView's response envelope is {"status": "success"|"failure", "message": ...}
         # on top of a 200 - PurrView reports a validation error in the body, not the
         # status code, so a "failure" envelope has to fail the call the same way a
         # transport error does, or callers would treat a rejected request as a success.
@@ -129,7 +129,7 @@ class PurrViewClient:
         """`{rules, subjects, targets, sources}`, each a list of `{ref, name}`.
 
         Derived from event history, not config - a rule that has never fired will not
-        appear here yet. Documented behaviour, not a bug (HA_INTEGRATION_PLAN.md WP-5).
+        appear here yet. Documented behaviour, not a bug.
         """
         data = await self._request_json("GET", "/api/watch-events/facets")
         return {key: data.get(key, []) for key in ("rules", "subjects", "targets", "sources")}
@@ -189,7 +189,7 @@ class PurrViewClient:
         return data.get("event")
 
     async def flag_event(self, event_uuid: str, reason: str, note: str = "", flagged: bool = True) -> None:
-        """WP-1: sets review_state to "flagged"; reason/note live under metadata_json.flag.
+        """Sets review_state to "flagged"; reason/note live under metadata_json.flag.
 
         `flagged=False` reverses an accidental flag: review_state goes back to
         "unreviewed" (there is no prior state to restore to - flagging already

@@ -1,4 +1,4 @@
-"""The purrview.flag_event service (WP-4 step 4).
+"""The purrview.flag_event service.
 
 Registered once for the domain, not once per config entry - a call targets a
 specific PurrView instance via config_entry_id, the same way any multi-instance

@@ -1,5 +1,5 @@
 /**
- * Live view card (WP-5): polls PurrViewLivePreviewView through the entry's proxy,
+ * Live view card: polls PurrViewLivePreviewView through the entry's proxy,
  * draws the frame plus a toggleable detection/track/zone overlay.
  *
  * Config:
@@ -16,8 +16,7 @@
  * PurrViewProfileSourcesView respectively), not hand-typed. A profile can outlive
  * any one running task_uuid (restarts, redeploys), which is why this polls by
  * profile_uuid and lets PurrViewClient.get_live_preview resolve the current task
- * server-side (see HA_INTEGRATION_PLAN.md WP-5) rather than the card tracking a
- * task_uuid itself.
+ * server-side rather than the card tracking a task_uuid itself.
  */
 
 import {

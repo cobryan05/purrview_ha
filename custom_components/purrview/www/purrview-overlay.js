@@ -1,9 +1,8 @@
 /**
  * Overlay drawing conventions, ported from PurrView's own
  * apps/image_tagging_server/static/js/app/nvr/overlay.js (+ the scaling helpers
- * from liveViewModal.js) rather than reinvented — see HA_INTEGRATION_PLAN.md WP-5:
- * "Reuse the existing overlay-drawing conventions rather than reimplementing;
- * normalised coordinates and analysis-space scaling are easy to get subtly wrong."
+ * from liveViewModal.js) rather than reinvented: normalised coordinates and
+ * analysis-space scaling are easy to get subtly wrong.
  *
  * This card has no build step and can't import across the app/HACS boundary, so
  * this is a copy, not a shared module - keep it in sync by hand if the source ever
@@ -97,9 +96,8 @@ export function decodeFrame(base64) {
  * Pixels of served frame per pixel of analysed frame. 1 unless a full-resolution
  * frame is being shown: detections/tracks are always reported in *analysis* space,
  * so drawing them onto a full-res frame unscaled crams every box into the
- * top-left corner. This is the single most likely bug in this card
- * (HA_INTEGRATION_PLAN.md WP-5) - ported verbatim from liveViewModal.js's
- * overlayScale, not re-derived.
+ * top-left corner. This is the single most likely bug in this card - ported
+ * verbatim from liveViewModal.js's overlayScale, not re-derived.
  */
 export function overlayScale(preview) {
   const served = preview?.frameWidth;

@@ -3,7 +3,7 @@ flag_event:
   description: >-
     Mark a PurrView event as having wrong labels, for later review in the app.
     Sets the event's review state to "flagged" and records the reason/note
-    under its metadata - see HA_INTEGRATION_PLAN.md WP-1. Call with
+    under its metadata. Call with
     flagged: false to undo an accidental flag.
   fields:
     event_uuid:

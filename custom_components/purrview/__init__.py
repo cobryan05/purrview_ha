@@ -1,12 +1,11 @@
 """The PurrView integration.
 
-WP-4: the media proxy view and the live-preview view (both streamed through HA, auth
+Sets up the media proxy view and the live-preview view (both streamed through HA, auth
 and all), a `PurrViewClient` per config entry, and the `purrview.flag_event` service.
 media_source (media_source.py) builds on the client this stores too, but is
-auto-discovered by HA's own platform loader rather than wired in here. WP-5: the
-purrview-card Lovelace card lives in www/ and is registered as a frontend module
-below, not through a platform. See HA_INTEGRATION_PLAN.md in the main PurrView repo
-for the full build order.
+auto-discovered by HA's own platform loader rather than wired in here. The Lovelace
+cards live in www/ and are registered as frontend modules below, not through a
+platform.
 """
 
 from __future__ import annotations

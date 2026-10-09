@@ -1,4 +1,4 @@
-"""Lists and filters recorded events for the events grid Lovelace card (WP-5).
+"""Lists and filters recorded events for the events grid Lovelace card.
 
 Thin passthrough onto `PurrViewClient.list_events`/`get_facets` - the card needs both
 a filtered page of events and the facet options that populate its filter bar, and

@@ -2,7 +2,7 @@
 
 Just asks for host/port/token and checks something answers before saving the
 entry. There's no PurrView endpoint yet that's specifically meant for a
-health check - WP-3's auth middleware and WP-4's proxy routes don't exist -
+health check - PurrView's auth middleware and the proxy routes don't exist -
 so a plain connection failure is the only thing worth catching here.
 """
 

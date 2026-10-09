@@ -1,5 +1,5 @@
 /**
- * Events grid card (WP-5): a filter bar plus a grid of event thumbnails, backed by
+ * Events grid card: a filter bar plus a grid of event thumbnails, backed by
  * PurrViewEventsView/PurrViewEventFacetsView. This is the flat alternative to HA's
  * own media_source browser (media_source.py) - that tree is fine for casting a clip
  * to a TV, but drilling through camera -> rule -> day for "what happened today" is
@@ -1359,7 +1359,7 @@ class PurrviewEventsCard extends HTMLElement {
     return button;
   }
 
-  //: purrview.flag_event (services.py, WP-1) toggles reviewState between "flagged"
+  //: purrview.flag_event (services.py) toggles reviewState between "flagged"
   //: and "unreviewed" - the same "flagged" status the main app's own event detail
   //: modal uses for "labels were wrong" (nvr/events/eventDetailModal.js). This card
   //: has no frame-correction tool of its own; flagging just puts the event in that

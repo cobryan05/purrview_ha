@@ -1,73 +1,66 @@
 # PurrView for Home Assistant
 
-A HACS integration that brings [PurrView](../whiskerwatcher) stats, live camera
-views, and recorded events into Home Assistant. The Lovelace overlay card ships from
-inside this same integration rather than as a separate HACS plugin — see
-`custom_components/purrview/www/`.
+A HACS custom integration that brings [PurrView](https://github.com/cobryan05/purrview)
+live camera views, recorded events, and detection stats into Home Assistant.
 
-Design rationale and the full work breakdown live in the main PurrView repo, not here:
+The Lovelace cards ship from inside this integration rather than as a separate HACS
+frontend plugin — they are registered automatically on setup, so there is nothing to
+add to your resources list.
 
-- `../whiskerwatcher/HOME_ASSISTANT_PLAN.md` - why, and the trade-offs
-- `../whiskerwatcher/HA_INTEGRATION_PLAN.md` - what to build, in what order
+## What you get
 
-This repo only exists to hold the code for components B (integration) and C (card) of
-that plan. Component A (the MQTT bridge) lives in the main PurrView repo itself.
+- **Config flow** — add a PurrView instance by host, port, and API token.
+- **Live view card** (`purrview-card`) — polls a watch profile's current frame and
+  draws a toggleable overlay of detections, tracks, zones, and labels. Ships a visual
+  editor, so you pick the instance and camera from dropdowns.
+- **Events card** (`purrview-events-card`) — browse recorded events with filters
+  (subject label tree, date range), play clips and timelapses inline, flag an event
+  for review, and pin it against cleanup.
+- **Media source** — PurrView recordings appear in the HA media browser, organised
+  By camera / By subject / By type / Recent.
+- **Services** — `purrview.flag_event`, plus starting and stopping a manual recording.
 
-## Status
+## Requirements
 
-**WP-4 is fully built** (this repo's own work): config flow, the media proxy view
-(`proxy.py`, `Range`/`206`-aware, streams recordings/snapshots/crops through HA), the
-PurrView API client (`api.py`), the `media_source` browse tree (`media_source.py` - By
-camera / By subject / By type / Recent, down to individual events), and the
-`purrview.flag_event` service (`services.py`).
+- Home Assistant **2026.8** or newer.
+- A reachable PurrView instance with an **API token** generated under
+  Settings → Security.
 
-**WP-5's live view (steps 1-3) is also built**: `www/purrview-card.js` +
-`www/purrview-overlay.js` (a Lovelace card polling `PurrViewLivePreviewView`, drawing
-the frame plus a toggleable detections/tracks/zones/labels overlay), backed by
-`PurrViewClient.get_live_preview`/`get_running_watcher_tasks` and
-`PurrViewLivePreviewView` (`live_preview.py`) resolving a watch profile to its current
-task server-side. Verified against a real running watcher on `purrview_mono_dev` via a
-disposable HA instance driven by Playwright - not just written and hoped-for. The card
-also ships a visual config editor (`getConfigElement`/`getStubConfig` in
-`purrview-card.js`, backed by a new `PurrViewWatchProfilesView`/
-`PurrViewClient.list_watch_profiles` on the backend) - picking a PurrView instance and
-camera/watcher from dropdowns instead of hand-typing `entry_id`/`profile_uuid`, since
-that was impractical for anyone but this repo's own author. Still open: WP-5's filter
-mode (steps 4-7) - much of its goal is already covered by WP-4's `media_source`
-browser, so what's left is narrower than originally scoped.
+> **This integration authenticates with the API token, never the web-UI login
+> password.** The two are independent switches in PurrView, and turning on *either*
+> gates the whole app — so an install that sets only a password will lock this
+> integration out. Generate an API token as well and paste it into the config flow.
 
-On the main app side, WP-1 (flag backend), WP-2 (MQTT bridge + discovery, since widened
-well past its original spec), WP-3 (auth token, since split into an API token plus a
-separate optional web-UI login password), and WP-6 (per-rule HA opt-out) are all done.
-See `HA_INTEGRATION_PLAN.md` for current status on every work package.
+## Installation
 
-**This integration authenticates with the API token, never the login password.** The
-two are independent switches in PurrView's Settings → Security, and turning on *either*
-gates the whole app — so an install that sets only a password locks this integration
-out. Generate an API token as well and paste it into the config flow.
+### HACS (custom repository)
+
+1. HACS → Integrations → ⋮ → **Custom repositories**.
+2. Add `https://github.com/cobryan05/purrview_ha` with category **Integration**.
+3. Install **PurrView**, then restart Home Assistant.
+4. Settings → Devices & Services → **Add Integration** → *PurrView*.
+
+### Manual
+
+Copy `custom_components/purrview/` into your Home Assistant `config/custom_components/`
+directory and restart.
 
 ## Development
-
-Targets Home Assistant 2026.8+. `pytest-homeassistant-custom-component` 0.13.342 (the
-version pinned below) requires **Python 3.14** — that's what pulled it in, not a choice
-made independently of HA's own version support. It resolves to HA core 2026.7.0b2, a
-beta of an earlier minor than the "2026.8+" target above — worth reverifying against a
-2026.8 release before relying on any API surface used here that's new since 2026.7.
 
 ```bash
 pip install -r requirements_test.txt
 pytest tests/
 ```
 
-Verified working as of this writing (`python:3.14-slim`, 69 tests green). The card's
-own JS has no test suite (it's outside both PurrView's and this repo's test harnesses,
-per `HA_INTEGRATION_PLAN.md`'s testing policy) - it's been verified by hand against a
-disposable Home Assistant instance instead; see `HA_INTEGRATION_PLAN.md` WP-5 for what
-that covered.
+`pytest-homeassistant-custom-component` (pinned in `requirements_test.txt`) requires
+**Python 3.14**. Tests use HA's own `hass` and `aioclient_mock` fixtures — no manual
+`aiohttp` patching.
 
-## Before publishing
+The cards' JavaScript has no automated suite; it is verified by hand against a
+disposable Home Assistant instance. `tests/test_card_label_tree_mirror.py` is the
+exception — it asserts the card's label tree still matches the app's, because the two
+have no build step sharing them and divergence fails silently.
 
-- `manifest.json`'s `codeowners`, `documentation`, and `issue_tracker` are placeholders
-  ("CHANGEME") - fill in once this has a real GitHub home.
-- `LICENSE` is Apache-2.0. The PurrView application is licensed separately; the
-  two are independent, and neither covers the other.
+## License
+
+Apache-2.0 — see [LICENSE](LICENSE).

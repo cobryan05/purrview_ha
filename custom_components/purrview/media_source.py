@@ -1,6 +1,6 @@
-"""media_source platform for PurrView: browse and play recorded events (WP-4 step 3).
+"""media_source platform for PurrView: browse and play recorded events.
 
-Tree, from HA_INTEGRATION_PLAN.md:
+Tree:
     By camera  -> <Camera>  -> <Rule>   -> <Day> -> event
     By subject -> <Subject> -> <Camera> -> <Day> -> event
     By type    -> <Rule>    -> <Camera> -> <Day> -> event
@@ -258,7 +258,7 @@ class PurrViewMediaSource(MediaSource):
             can_play=True,
             can_expand=False,
             # Routed through our own proxy, not PurrView's raw URL - unauthenticated
-            # and LAN-only otherwise, same reasoning as the recording itself (WP-4).
+            # and LAN-only otherwise, same reasoning as the recording itself.
             thumbnail=f"/api/purrview/{entry_id}/snapshot/{event['uuid']}" if event.get("hasSnapshot") else None,
         )
 

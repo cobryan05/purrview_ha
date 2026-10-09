@@ -1,4 +1,4 @@
-"""Streams live-preview JSON through HA, for the Lovelace card (WP-5).
+"""Streams live-preview JSON through HA, for the Lovelace card.
 
 Unlike proxy.py's recordings/snapshots/crops, a live-preview response is small
 structured JSON with an embedded base64 frame - no Range semantics apply, and

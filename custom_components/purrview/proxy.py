@@ -1,6 +1,6 @@
 """Streams PurrView media (recordings, snapshots, crops) through Home Assistant.
 
-Why this exists at all, from HA_INTEGRATION_PLAN.md WP-4: resolving media straight to
+Why this exists at all: resolving media straight to
 `http://<purrview-host>:7999/...` fails for any client off the LAN and carries no auth.
 Routing it through this view instead gives every consumer - the media browser, a cast
 target, the future Lovelace card - one thing that is always reachable and always
@@ -11,7 +11,7 @@ resolves URLs through `async_sign_path`, which appends a short-lived signature H
 auth middleware accepts in place of a session or a header. That signature is what makes
 this playable from a `<video>` tag and a cast device, neither of which can attach an
 `Authorization` header - the same problem PurrView's own `?token=` fallback solves one
-layer down, for HA's own long-lived token instead of PurrView's (WP-3).
+layer down, for HA's own long-lived token instead of PurrView's.
 """
 
 from __future__ import annotations
