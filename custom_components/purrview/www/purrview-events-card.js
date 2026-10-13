@@ -338,6 +338,15 @@ async function signPath(hass, path, expires) {
   }
 }
 
+//: How long a grid thumbnail's signature is minted for. Short on purpose - it only
+//: has to survive the gap between intersection and the browser issuing the request.
+const THUMB_SIGN_SECONDS = 60;
+
+//: Where a tile stashes its own "fetch my thumbnail" closure for the shared
+//: IntersectionObserver to call. A property rather than a Map so it dies with the
+//: element on `grid.innerHTML = ''`.
+const THUMB_LOADER = '__purrviewThumbLoad';
+
 //: Which filter fields hold *label* refs, and where each one's "include child
 //: labels" toggle lives in the filter state. A camera and a rule are flat entities;
 //: a subject ref is (usually) a label uuid, and labels are a tree.
@@ -493,6 +502,8 @@ class PurrviewEventsCard extends HTMLElement {
 
   disconnectedCallback() {
     this._connected = false;
+    this._thumbObs?.disconnect();
+    this._thumbObs = null;
     // A fixed-position popup outlives the card visually (it's not a descendant in
     // the layout sense) if the card is torn down while a mark is still hovered.
     if (this._els) this._hideMarkPreview();
@@ -861,6 +872,10 @@ class PurrviewEventsCard extends HTMLElement {
     if (reset) {
       this._events = [];
       this._els.grid.innerHTML = '';
+      // The observer holds a strong reference to every tile it is watching, and a
+      // reset detaches them all.
+      this._thumbObs?.disconnect();
+      this._thumbObs = null;
       // Tracks the day header of the last tile appended, so "load more" continuing
       // an existing day doesn't repeat its header, but a fresh reset always starts
       // clean even if the next page happens to open on the same day as before.
@@ -1176,6 +1191,29 @@ class PurrviewEventsCard extends HTMLElement {
     preview.hidden = false;
   }
 
+  //: Thumbnails are signed on intersection rather than at render time. A signature
+  //: minted when the tile was created is routinely expired by the time a long scroll
+  //: reaches it, which stopped the grid producing thumbnails while the lightbox -
+  //: signed on click - kept working.
+  _thumbObserver() {
+    if (!this._thumbObs) {
+      this._thumbObs = new IntersectionObserver(
+        (entries) => {
+          for (const entry of entries) {
+            if (!entry.isIntersecting) continue;
+            this._thumbObs.unobserve(entry.target);
+            entry.target[THUMB_LOADER]?.();
+          }
+        },
+        // rootMargin against the card's own scroller, not the page: `.grid-wrap`
+        // scrolls internally, so a viewport-rooted observer would fire for every
+        // tile at once the moment the card is on screen.
+        { root: this._els.gridWrap, rootMargin: '400px 0px' },
+      );
+    }
+    return this._thumbObs;
+  }
+
   _tile(event) {
     const tile = document.createElement('button');
     tile.className = 'tile';
@@ -1187,19 +1225,38 @@ class PurrviewEventsCard extends HTMLElement {
     if (event.hasSnapshot || event.hasCrop) {
       const img = document.createElement('img');
       const kind = event.hasCrop ? 'crop' : 'snapshot';
-      img.loading = 'lazy';
       img.alt = event.subjectName || event.ruleName || 'Event';
       img.hidden = true;
       const placeholder = document.createElement('div');
       placeholder.className = 'no-thumb';
       placeholder.textContent = 'No image';
       thumb.append(img, placeholder);
-      signPath(this._hass, `/api/purrview/${this._config.entry_id}/${kind}/${event.uuid}`, 60).then((signed) => {
-        if (!signed) return;
-        img.src = signed;
+
+      const path = `/api/purrview/${this._config.entry_id}/${kind}/${event.uuid}`;
+      let retried = false;
+      const load = () => {
+        signPath(this._hass, path, THUMB_SIGN_SECONDS).then((signed) => {
+          if (signed) img.src = signed;
+        });
+      };
+      // Reveal on `load`, not on assignment: a dead signature 401s, and hiding the
+      // placeholder before the bytes arrive renders that as a blank tile instead of
+      // "No image".
+      img.addEventListener('load', () => {
         img.hidden = false;
         placeholder.hidden = true;
       });
+      img.addEventListener('error', () => {
+        img.hidden = true;
+        placeholder.hidden = false;
+        if (retried) return;
+        retried = true;
+        load();
+      });
+      // The container, not the `<img>`: the image starts `hidden`, and a
+      // `display: none` target has no box, so it can never intersect.
+      thumb[THUMB_LOADER] = load;
+      this._thumbObserver().observe(thumb);
     } else {
       const placeholder = document.createElement('div');
       placeholder.className = 'no-thumb';
