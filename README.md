@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="custom_components/purrview/brand/dark_logo.png">
+  <img src="custom_components/purrview/brand/logo.png" alt="PurrView" width="454">
+</picture>
+
 # PurrView for Home Assistant
 
 A HACS custom integration that brings [PurrView](https://github.com/cobryan05/purrview)
@@ -6,6 +11,9 @@ live camera views, recorded events, and detection stats into Home Assistant.
 The Lovelace cards ship from inside this integration rather than as a separate HACS
 frontend plugin — they are registered automatically on setup, so there is nothing to
 add to your resources list.
+
+Brand icons ship in `custom_components/purrview/brand/`, which Home Assistant 2026.3
+and newer prefer over the brands CDN — nothing is registered in `home-assistant/brands`.
 
 ## What you get
 
