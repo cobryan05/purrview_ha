@@ -16,12 +16,11 @@ flag_event:
     reason:
       name: Reason
       description: >-
-        A short machine-readable reason. "wrong_labels" is what the future
-        Lovelace card sends from its single "Labels wrong" button - this isn't
-        a closed set on the PurrView side, so any short string is accepted.
-        Ignored when flagged is false.
+        A short machine-readable reason. The events card's "Flag: wrong label"
+        button sends "wrong_label" - this isn't a closed set on the PurrView
+        side, so any short string is accepted. Ignored when flagged is false.
       required: true
-      example: wrong_labels
+      example: wrong_label
       selector:
         text:
     note:

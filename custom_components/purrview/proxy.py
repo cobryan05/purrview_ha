@@ -3,8 +3,8 @@
 Why this exists at all: resolving media straight to
 `http://<purrview-host>:7999/...` fails for any client off the LAN and carries no auth.
 Routing it through this view instead gives every consumer - the media browser, a cast
-target, the future Lovelace card - one thing that is always reachable and always
-authorized, regardless of where PurrView actually lives.
+target, the events card - one thing that is always reachable and always authorized,
+regardless of where PurrView actually lives.
 
 `requires_auth = True`, but nothing here hands the caller a login prompt: `media_source`
 resolves URLs through `async_sign_path`, which appends a short-lived signature HA's own
