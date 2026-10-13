@@ -5,12 +5,14 @@ does - no real PurrView instance, matching this integration's existing test styl
 """
 
 import pytest
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.purrview.api import (
     PurrViewApiError,
     PurrViewAuthError,
     PurrViewClient,
 )
+from custom_components.purrview.const import DOMAIN
 
 HOST = "192.168.1.50"
 PORT = 7999
@@ -352,3 +354,46 @@ class TestRejectedCredential:
 
         with pytest.raises(PurrViewAuthError):
             await client.list_labels()
+
+
+class TestScheme:
+    async def test_https_is_used_when_the_entry_asks_for_it(self, hass, aioclient_mock):
+        """A PurrView behind a TLS reverse proxy was unreachable while the scheme was
+        hardcoded: every call went to http:// regardless of how the entry was set up."""
+        aioclient_mock.get(f"https://{HOST}:{PORT}/api/labels", json={"status": "success", "labels": []})
+
+        client = PurrViewClient(hass, host=HOST, port=PORT, use_ssl=True)
+
+        assert client.base_url == f"https://{HOST}:{PORT}"
+        await client.list_labels()
+        assert aioclient_mock.call_count == 1
+
+    async def test_plain_http_remains_the_default(self, hass):
+        """Entries created before the scheme was configurable carry no ssl key."""
+        assert PurrViewClient(hass, host=HOST, port=PORT).base_url == f"http://{HOST}:{PORT}"
+
+
+class TestReauthTrigger:
+    async def test_a_refused_call_starts_a_reauth_flow(self, hass, aioclient_mock):
+        """Nothing here polls PurrView, so a refused call is the only moment a rotated
+        token is noticed. Without this the cards just fail until someone reads a log."""
+        aioclient_mock.get(f"{BASE}/api/labels", status=401)
+        entry = MockConfigEntry(domain=DOMAIN, data={"host": HOST, "port": PORT, "token": "stale"})
+        entry.add_to_hass(hass)
+        client = PurrViewClient(hass, host=HOST, port=PORT, token="stale", entry=entry)
+
+        with pytest.raises(PurrViewAuthError):
+            await client.list_labels()
+        await hass.async_block_till_done()
+
+        assert [f["context"]["source"] for f in hass.config_entries.flow.async_progress()] == ["reauth"]
+
+    async def test_a_successful_call_starts_no_flow(self, hass, aioclient_mock):
+        aioclient_mock.get(f"{BASE}/api/labels", json={"status": "success", "labels": []})
+        entry = MockConfigEntry(domain=DOMAIN, data={"host": HOST, "port": PORT, "token": "good"})
+        entry.add_to_hass(hass)
+
+        await PurrViewClient(hass, host=HOST, port=PORT, token="good", entry=entry).list_labels()
+        await hass.async_block_till_done()
+
+        assert hass.config_entries.flow.async_progress() == []

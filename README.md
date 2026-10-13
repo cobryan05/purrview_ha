@@ -19,20 +19,35 @@ and newer prefer over the brands CDN — nothing is registered in `home-assistan
 
 - **Config flow** — add a PurrView instance by host, port, and API token.
 - **Live view card** (`purrview-card`) — polls a watch profile's current frame and
-  draws a toggleable overlay of detections, tracks, zones, and labels. Ships a visual
-  editor, so you pick the instance and camera from dropdowns.
-- **Events card** (`purrview-events-card`) — browse recorded events with filters
-  (subject label tree, date range), play clips and timelapses inline, flag an event
-  for review, and pin it against cleanup.
+  draws a toggleable overlay of detections, tracks, zones, and labels.
+- **Events card** (`purrview-events-card`) — two views of the same recorded events.
+  A **grid** of thumbnails with filters (camera, subject label tree, event type, date
+  range), click-to-play clips and timelapses, flag for review, and pin against
+  cleanup. A **timeline** of swimlanes — one per camera/subject/event-type
+  combination actually present in history — with a histogram above it, hover preview,
+  and click-through into the grid filtered to that lane and hour.
+
+Both cards ship a visual editor, so every instance, camera, profile and filter is
+picked from a dropdown or checklist rather than hand-typed as a uuid.
 - **Media source** — PurrView recordings appear in the HA media browser, organised
   By camera / By subject / By type / Recent.
-- **Services** — `purrview.flag_event`, plus starting and stopping a manual recording.
+- **Services** — `purrview.flag_event` and `purrview.pin_event`, plus
+  `purrview.start_recording` and `purrview.stop_recording` for recording a camera
+  with no rule behind it.
 
 ## Requirements
 
 - Home Assistant **2026.8** or newer.
 - A reachable PurrView instance with an **API token** generated under
   Settings → Security.
+
+HTTP is the default. Tick **Connect over HTTPS** in the config flow for a PurrView
+behind TLS, and untick **Verify the certificate** only if that certificate is
+self-signed — it applies to this integration's requests alone, never to the rest of
+Home Assistant.
+
+If PurrView later starts refusing the token, the integration raises a repair prompt
+to re-enter it; the entry, and every card pointed at it, survives.
 
 > **This integration authenticates with the API token, never the web-UI login
 > password.** The two are independent switches in PurrView, and turning on *either*
@@ -52,6 +67,33 @@ and newer prefer over the brands CDN — nothing is registered in `home-assistan
 
 Copy `custom_components/purrview/` into your Home Assistant `config/custom_components/`
 directory and restart.
+
+## Card options
+
+Both cards are added from the **Add card** picker and configured in its visual
+editor. The YAML underneath, if you prefer to write it:
+
+```yaml
+type: custom:purrview-card
+entry_id: <purrview config entry id>   # required
+profile_uuid: <watch profile uuid>     # required
+source_uuid: <camera uuid>             # optional, defaults to the profile's first
+```
+
+```yaml
+type: custom:purrview-events-card
+entry_id: <purrview config entry id>   # required
+title: Events                          # optional
+page_size: 60                          # optional
+max_height: 480                        # optional, px before the card scrolls internally
+default_range: 7d                      # optional: today | 7d | 30d | all
+default_source_uuids: []               # optional, preset camera filter
+default_subject_refs: []               # optional, preset subject filter
+default_rule_uuids: []                 # optional, preset event-type filter
+```
+
+The `default_*` filters are also what **Reset filters** returns to, not just the
+starting state — a dashboard built for one camera snaps back to that camera.
 
 ## Development
 

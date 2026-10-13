@@ -5,13 +5,30 @@
         "data": {
           "host": "Host",
           "port": "Port",
-          "token": "Access token (optional)"
+          "token": "Access token (optional)",
+          "ssl": "Connect over HTTPS",
+          "verify_ssl": "Verify the certificate"
+        },
+        "data_description": {
+          "token": "Generate one in PurrView under Settings → Security. Required whenever PurrView has either its token or its password gate switched on.",
+          "verify_ssl": "Turn off only for a PurrView instance using a self-signed certificate."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-enter the PurrView access token",
+        "description": "PurrView at {host} is refusing the token this integration holds.",
+        "data": {
+          "token": "Access token"
         }
       }
     },
     "error": {
       "cannot_connect": "Failed to connect",
       "invalid_auth": "Invalid access token"
+    },
+    "abort": {
+      "already_configured": "This PurrView instance is already configured",
+      "reauth_successful": "Re-authentication was successful"
     }
   }
 }

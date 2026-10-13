@@ -20,7 +20,6 @@ import aiohttp
 from aiohttp import web
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import rejected_credential
 from .const import DOMAIN
@@ -77,12 +76,11 @@ class PurrViewMediaProxyView(HomeAssistantView):
         if range_header := request.headers.get("Range"):
             headers["Range"] = range_header
 
-        session = async_get_clientsession(self._hass)
         try:
             # Redirects are not followed: PurrView's auth gate answers a page request
             # with a 303 to its login form, and following that would stream the form's
             # HTML into whatever <video> or <img> asked for this.
-            upstream = await session.get(
+            upstream = await client.session.get(
                 f"{client.base_url}{path_template.format(uuid=uuid)}",
                 headers=headers,
                 allow_redirects=False,

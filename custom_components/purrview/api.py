@@ -9,9 +9,12 @@ element needs the response streamed and Range-aware, not decoded as JSON.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from typing import Any
 
+from aiohttp import ClientSession
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
@@ -86,15 +89,52 @@ _LIVE_STATUSES = frozenset({"running", "pending", "paused"})
 class PurrViewClient:
     """Talks to one PurrView instance's HTTP API (image_tagging_server, port 7999 by default)."""
 
-    def __init__(self, hass: HomeAssistant, host: str, port: int, token: str | None = None) -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        host: str,
+        port: int,
+        token: str | None = None,
+        use_ssl: bool = False,
+        verify_ssl: bool = True,
+        entry: ConfigEntry | None = None,
+    ) -> None:
         self._hass = hass
+        self._entry = entry
         self.host = host
         self.port = port
         self.token = token or None
+        self.use_ssl = use_ssl
+        self.verify_ssl = verify_ssl
 
     @property
     def base_url(self) -> str:
-        return f"http://{self.host}:{self.port}"
+        return f"{'https' if self.use_ssl else 'http'}://{self.host}:{self.port}"
+
+    @property
+    def session(self) -> ClientSession:
+        """The shared session matching this instance's certificate policy.
+
+        `verify_ssl=False` returns a second shared session rather than disabling
+        verification on HA's default one, so this entry's self-signed certificate
+        cannot weaken any other integration's requests.
+        """
+        return async_get_clientsession(self._hass, verify_ssl=self.verify_ssl)
+
+    async def async_check_credentials(self) -> None:
+        """Raise if PurrView is unreachable, or refuses the token this client holds.
+
+        Redirects are not followed: a refused page request is a 303 to PurrView's
+        login form, and following it lands on a 200 that says nothing about the
+        credential. Raises PurrViewAuthError on refusal; OSError/TimeoutError reach
+        the caller unchanged, so "wrong token" and "no route to host" stay apart.
+        """
+        async with asyncio.timeout(10):
+            async with self.session.get(
+                f"{self.base_url}/", headers=self.auth_headers(), allow_redirects=False
+            ) as resp:
+                if rejected_credential(resp):
+                    raise PurrViewAuthError(self._refused_message())
 
     def auth_headers(self) -> dict[str, str]:
         """Headers to attach to a request.
@@ -104,17 +144,24 @@ class PurrViewClient:
         """
         return {"Authorization": f"Bearer {self.token}"} if self.token else {}
 
+    def _refused_message(self) -> str:
+        return (
+            "PurrView refused the configured access token"
+            if self.token
+            else "PurrView requires an access token and none is configured"
+        )
+
     async def _request_json(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
-        session = async_get_clientsession(self._hass)
         headers = {**self.auth_headers(), **kwargs.pop("headers", {})}
         kwargs.setdefault("allow_redirects", False)
-        async with session.request(method, f"{self.base_url}{path}", headers=headers, **kwargs) as resp:
+        async with self.session.request(method, f"{self.base_url}{path}", headers=headers, **kwargs) as resp:
             if rejected_credential(resp):
-                raise PurrViewAuthError(
-                    "PurrView refused the configured access token"
-                    if self.token
-                    else "PurrView requires an access token and none is configured"
-                )
+                # Nothing here polls PurrView, so a refused call is the only moment the
+                # integration learns a token has been rotated. HA drops repeat flows for
+                # an entry that already has one open, so this can fire per failed call.
+                if self._entry is not None:
+                    self._entry.async_start_reauth(self._hass)
+                raise PurrViewAuthError(self._refused_message())
             resp.raise_for_status()
             data = await resp.json()
         # PurrView's response envelope is {"status": "success"|"failure", "message": ...}

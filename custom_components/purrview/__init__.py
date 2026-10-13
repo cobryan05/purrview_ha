@@ -15,7 +15,7 @@ from pathlib import Path
 from homeassistant.components.frontend import add_extra_js_url
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_HOST, CONF_PORT
+from homeassistant.const import CONF_HOST, CONF_PORT, CONF_SSL, CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant
 
 from .api import PurrViewClient, configured_clients
@@ -43,11 +43,16 @@ _CARD_URLS = (f"{_STATIC_URL_PATH}/purrview-card.js", f"{_STATIC_URL_PATH}/purrv
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     domain_data = hass.data.setdefault(DOMAIN, {})
+    # Entries created before the scheme was configurable carry neither key, and
+    # these defaults are what they were already doing.
     domain_data[entry.entry_id] = PurrViewClient(
         hass,
         host=entry.data[CONF_HOST],
         port=entry.data[CONF_PORT],
         token=entry.data.get(CONF_TOKEN),
+        use_ssl=entry.data.get(CONF_SSL, False),
+        verify_ssl=entry.data.get(CONF_VERIFY_SSL, True),
+        entry=entry,
     )
 
     # Registered once, not per-entry: both views resolve which PurrView instance to

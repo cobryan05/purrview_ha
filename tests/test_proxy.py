@@ -8,6 +8,7 @@ about the view's routing, error mapping, and header forwarding.
 from unittest.mock import MagicMock
 
 import aiohttp
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.setup import async_setup_component
 
 from custom_components.purrview.const import DOMAIN
@@ -24,6 +25,9 @@ async def _register(hass, *, token=None):
     client = MagicMock()
     client.base_url = BASE
     client.auth_headers.return_value = {"Authorization": f"Bearer {token}"} if token else {}
+    # A real session, not the MagicMock's: the view awaits client.session.get(), and
+    # aioclient_mock intercepts the shared session rather than the client.
+    client.session = async_get_clientsession(hass)
     hass.data[DOMAIN] = {"entry-1": client}
     hass.http.register_view(PurrViewMediaProxyView(hass))
     return client
