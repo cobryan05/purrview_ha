@@ -1,8 +1,10 @@
 {
   "domain": "purrview",
   "name": "PurrView",
+  "after_dependencies": ["frontend"],
   "codeowners": ["@cobryan05"],
   "config_flow": true,
+  "dependencies": ["http"],
   "documentation": "https://github.com/cobryan05/purrview_ha",
   "integration_type": "hub",
   "iot_class": "local_polling",
