@@ -397,3 +397,65 @@ class TestReauthTrigger:
         await hass.async_block_till_done()
 
         assert hass.config_entries.flow.async_progress() == []
+
+
+class TestTrailingSlashRedirect:
+    async def test_a_collection_redirect_is_followed(self, hass, aioclient_mock):
+        """PurrView's collection routes answer the bare path with FastAPI's 307 to the
+        trailing-slash form. Not following it left the events card with an empty body
+        to decode, while the live card - which calls no such route - kept working."""
+        aioclient_mock.get(
+            f"{BASE}/api/watch-events",
+            status=307,
+            headers={"location": f"{BASE}/api/watch-events/?limit=5&offset=0"},
+        )
+        aioclient_mock.get(
+            f"{BASE}/api/watch-events/",
+            json={"status": "success", "events": [{"uuid": "e1"}], "total": 1},
+        )
+
+        events, total = await _client(hass).list_events(limit=5)
+
+        assert [e["uuid"] for e in events] == ["e1"]
+        assert total == 1
+
+    async def test_the_query_is_not_sent_twice(self, hass, aioclient_mock):
+        """The Location carries the query already; re-sending params as well would
+        repeat every filter, and a repeated key is how this API spells a multi-select."""
+        aioclient_mock.get(
+            f"{BASE}/api/watch-events",
+            status=307,
+            headers={"location": f"{BASE}/api/watch-events/?limit=5&offset=0"},
+        )
+        aioclient_mock.get(f"{BASE}/api/watch-events/", json={"status": "success", "events": [], "total": 0})
+
+        await _client(hass).list_events(limit=5)
+
+        url = aioclient_mock.mock_calls[-1][1]
+        assert sorted(url.query.getall("limit")) == ["5"]
+
+    async def test_a_redirect_cannot_move_the_token_to_another_host(self, hass, aioclient_mock):
+        """A Location is a value from the network. Only its path is used, so a hostile
+        or misconfigured one cannot replay the Authorization header elsewhere."""
+        aioclient_mock.get(
+            f"{BASE}/api/labels",
+            status=307,
+            headers={"location": "http://evil.example/api/labels/"},
+        )
+        aioclient_mock.get(f"{BASE}/api/labels/", json={"status": "success", "labels": []})
+
+        await _client(hass, token="s3cr3t").list_labels()
+
+        assert aioclient_mock.mock_calls[-1][1].host == "192.168.1.50"
+
+    async def test_a_login_bounce_is_still_not_followed(self, hass, aioclient_mock):
+        """The reason allow_redirects was off in the first place."""
+        aioclient_mock.get(
+            f"{BASE}/api/labels",
+            status=303,
+            headers={"location": "/login?next=%2F"},
+            text="<html>login</html>",
+        )
+
+        with pytest.raises(PurrViewAuthError):
+            await _client(hass).list_labels()

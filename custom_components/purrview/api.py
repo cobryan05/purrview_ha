@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime
 from typing import Any
+from urllib.parse import urlsplit
 
 from aiohttp import ClientSession
 from homeassistant.config_entries import ConfigEntry
@@ -67,6 +68,12 @@ class PurrViewAuthError(PurrViewApiError):
 #: a 401; a page request gets a 303 to the login form, which is why redirects are not
 #: followed below - following one hands `json()` a page of HTML.
 _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+
+#: Redirects worth following. One is enough for the only kind PurrView issues on an
+#: API route: FastAPI's 307 from a collection path to its trailing-slash form. The
+#: login bounce is caught by rejected_credential before this is consulted, which is
+#: why following a redirect at all is safe here.
+_MAX_REDIRECTS = 1
 
 
 def rejected_credential(resp: Any) -> bool:
@@ -144,6 +151,20 @@ class PurrViewClient:
         """
         return {"Authorization": f"Bearer {self.token}"} if self.token else {}
 
+    def _redirect_target(self, resp: Any) -> str:
+        """The configured origin plus the path and query PurrView redirected to.
+
+        Only the path is taken from the Location. A redirect can therefore never move
+        a request - and the token it carries - to another host, and a PurrView behind
+        a TLS proxy that answers with an http:// Location stays on https.
+        """
+        location = resp.headers.get("location") or ""
+        split = urlsplit(location)
+        target = split.path or "/"
+        if split.query:
+            target = f"{target}?{split.query}"
+        return f"{self.base_url}{target}"
+
     def _refused_message(self) -> str:
         return (
             "PurrView refused the configured access token"
@@ -154,16 +175,29 @@ class PurrViewClient:
     async def _request_json(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         headers = {**self.auth_headers(), **kwargs.pop("headers", {})}
         kwargs.setdefault("allow_redirects", False)
-        async with self.session.request(method, f"{self.base_url}{path}", headers=headers, **kwargs) as resp:
-            if rejected_credential(resp):
-                # Nothing here polls PurrView, so a refused call is the only moment the
-                # integration learns a token has been rotated. HA drops repeat flows for
-                # an entry that already has one open, so this can fire per failed call.
-                if self._entry is not None:
-                    self._entry.async_start_reauth(self._hass)
-                raise PurrViewAuthError(self._refused_message())
-            resp.raise_for_status()
-            data = await resp.json()
+        url = f"{self.base_url}{path}"
+
+        for _ in range(_MAX_REDIRECTS + 1):
+            async with self.session.request(method, url, headers=headers, **kwargs) as resp:
+                if rejected_credential(resp):
+                    # Nothing here polls PurrView, so a refused call is the only moment
+                    # the integration learns a token has been rotated. HA drops repeat
+                    # flows for an entry that already has one open, so this can fire per
+                    # failed call.
+                    if self._entry is not None:
+                        self._entry.async_start_reauth(self._hass)
+                    raise PurrViewAuthError(self._refused_message())
+                if resp.status in _REDIRECT_STATUSES:
+                    url = self._redirect_target(resp)
+                    # The query survives in the Location; sending it again as well would
+                    # duplicate every filter.
+                    kwargs.pop("params", None)
+                    continue
+                resp.raise_for_status()
+                data = await resp.json()
+                break
+        else:
+            raise PurrViewApiError(f"PurrView kept redirecting {method} {path}")
         # PurrView's response envelope is {"status": "success"|"failure", "message": ...}
         # on top of a 200 - PurrView reports a validation error in the body, not the
         # status code, so a "failure" envelope has to fail the call the same way a
