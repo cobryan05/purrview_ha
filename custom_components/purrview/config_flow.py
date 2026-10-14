@@ -83,6 +83,40 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors)
 
+    async def async_step_reconfigure(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Change an existing entry's host, port, token or scheme in place.
+
+        Reauth covers the token PurrView has already started refusing; this covers
+        every deliberate change, including rotating a token that still works. The
+        entry keeps its entry_id, so the cards and services pointed at it survive.
+        """
+        entry = self._get_reconfigure_entry()
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            await self.async_set_unique_id(f"{user_input[CONF_HOST]}:{user_input[CONF_PORT]}")
+            if any(
+                other.entry_id != entry.entry_id and other.unique_id == self.unique_id
+                for other in self._async_current_entries()
+            ):
+                return self.async_abort(reason="already_configured")
+            try:
+                await _validate_input(self.hass, user_input)
+            except CannotConnect:
+                errors["base"] = "cannot_connect"
+            except InvalidAuth:
+                errors["base"] = "invalid_auth"
+            else:
+                return self.async_update_reload_and_abort(
+                    entry, data=user_input, unique_id=self.unique_id, title=user_input[CONF_HOST]
+                )
+
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=self.add_suggested_values_to_schema(STEP_USER_DATA_SCHEMA, entry.data),
+            errors=errors,
+        )
+
     async def async_step_reauth(self, entry_data: dict[str, Any]) -> ConfigFlowResult:
         return await self.async_step_reauth_confirm()
 

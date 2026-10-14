@@ -143,3 +143,60 @@ class TestReauth:
         assert result["type"] == FlowResultType.FORM
         assert result["errors"] == {"base": "invalid_auth"}
         assert entry.data["token"] == "stale"
+
+
+class TestReconfigure:
+    def _entry(self, hass):
+        entry = MockConfigEntry(
+            domain=DOMAIN,
+            unique_id="192.168.1.50:7999",
+            data={"host": "192.168.1.50", "port": 7999, "token": "old"},
+        )
+        entry.add_to_hass(hass)
+        return entry
+
+    async def test_the_token_can_be_changed_without_rebuilding_the_entry(self, hass, aioclient_mock):
+        """Reauth only fires once PurrView refuses. Rotating a token that still works
+        had no route at all, so the entry_id every card points at had to be thrown away."""
+        aioclient_mock.get("http://192.168.1.50:7999/", status=200)
+        entry = self._entry(hass)
+        entry_id = entry.entry_id
+
+        result = await entry.start_reconfigure_flow(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"host": "192.168.1.50", "port": 7999, "token": "new"}
+        )
+
+        assert result["type"] == FlowResultType.ABORT
+        assert result["reason"] == "reconfigure_successful"
+        assert entry.data["token"] == "new"
+        assert entry.entry_id == entry_id
+
+    async def test_moving_the_entry_onto_another_configured_instance_is_refused(self, hass, aioclient_mock):
+        aioclient_mock.get("http://192.168.1.60:7999/", status=200)
+        entry = self._entry(hass)
+        MockConfigEntry(
+            domain=DOMAIN, unique_id="192.168.1.60:7999", data={"host": "192.168.1.60", "port": 7999}
+        ).add_to_hass(hass)
+
+        result = await entry.start_reconfigure_flow(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"host": "192.168.1.60", "port": 7999}
+        )
+
+        assert result["type"] == FlowResultType.ABORT
+        assert result["reason"] == "already_configured"
+        assert entry.data["host"] == "192.168.1.50"
+
+    async def test_a_new_host_updates_the_identity_too(self, hass, aioclient_mock):
+        """The unique_id is host:port, so a moved instance that kept the old id would
+        then collide with a fresh entry added for the address it moved to."""
+        aioclient_mock.get("http://192.168.1.77:7999/", status=200)
+        entry = self._entry(hass)
+
+        result = await entry.start_reconfigure_flow(hass)
+        await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"host": "192.168.1.77", "port": 7999}
+        )
+
+        assert entry.unique_id == "192.168.1.77:7999"
