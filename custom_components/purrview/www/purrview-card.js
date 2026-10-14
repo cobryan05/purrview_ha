@@ -31,6 +31,7 @@ import {
   trackColour,
   ZONE_COLOUR,
 } from './purrview-overlay.js';
+import { errorText } from './purrview-errors.js';
 
 const POLL_INTERVAL_MS = 1000;
 
@@ -252,7 +253,7 @@ class PurrviewCard extends HTMLElement {
         await this._apply(preview);
       }
     } catch (err) {
-      this._setStatus(`Could not reach PurrView — retrying. (${err.message || err})`, true);
+      this._setStatus(`Could not reach PurrView — retrying. (${errorText(err)})`, true);
     } finally {
       this._inFlight = false;
       if (this._pendingImmediate) {
@@ -326,7 +327,7 @@ class PurrviewCard extends HTMLElement {
       // carries the authoritative state including the cap the watcher settled on.
       this._poll({ immediate: true });
     } catch (err) {
-      this._els.status.textContent = `Could not change the recording: ${err.message || err}`;
+      this._els.status.textContent = `Could not change the recording: ${errorText(err)}`;
     } finally {
       if (btn) btn.disabled = false;
     }

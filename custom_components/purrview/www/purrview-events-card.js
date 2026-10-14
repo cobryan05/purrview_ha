@@ -28,6 +28,8 @@
  * uses - so an editor picks by name, never a hand-typed uuid.
  */
 
+import { errorText } from './purrview-errors.js';
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PAGE_SIZE = 60;
 
@@ -862,7 +864,7 @@ class PurrviewEventsCard extends HTMLElement {
       // that name lives, so the tile caption looks it up from here.
       this._sourceNames = Object.fromEntries((facets?.sources || []).map((s) => [s.ref, s.name]));
     } catch (err) {
-      this._setStatus(`Could not load filters. (${err.message || err})`, true);
+      this._setStatus(`Could not load filters. (${errorText(err)})`, true);
     }
   }
 
@@ -912,7 +914,7 @@ class PurrviewEventsCard extends HTMLElement {
         this._els.grid.appendChild(empty);
       }
     } catch (err) {
-      this._setStatus(`Could not reach PurrView. (${err.message || err})`, true);
+      this._setStatus(`Could not reach PurrView. (${errorText(err)})`, true);
     } finally {
       this._loading = false;
     }
@@ -946,7 +948,7 @@ class PurrviewEventsCard extends HTMLElement {
       this._renderTimeline(groupsData?.groups || [], histData?.bucket || 'hour', histData?.buckets || []);
       this._setStatus('');
     } catch (err) {
-      this._setStatus(`Could not reach PurrView. (${err.message || err})`, true);
+      this._setStatus(`Could not reach PurrView. (${errorText(err)})`, true);
     } finally {
       this._loadingTimeline = false;
     }
@@ -1410,7 +1412,7 @@ class PurrviewEventsCard extends HTMLElement {
         render();
       } catch (err) {
         button.disabled = false;
-        button.textContent = `Could not update — retry (${err.message || err})`;
+        button.textContent = `Could not update — retry (${errorText(err)})`;
       }
     });
     return button;
@@ -1449,7 +1451,7 @@ class PurrviewEventsCard extends HTMLElement {
         render();
       } catch (err) {
         button.disabled = false;
-        button.textContent = `Could not update — retry (${err.message || err})`;
+        button.textContent = `Could not update — retry (${errorText(err)})`;
       }
     });
     return button;
