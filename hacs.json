@@ -1,4 +1,6 @@
 {
   "name": "PurrView",
-  "homeassistant": "2024.11.0"
+  "homeassistant": "2024.11.0",
+  "zip_release": true,
+  "filename": "purrview.zip"
 }
