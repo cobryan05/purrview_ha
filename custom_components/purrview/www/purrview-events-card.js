@@ -12,9 +12,15 @@
  *   title: <string>                             (optional, default "Events")
  *   page_size: <number>                         (optional, default 60)
  *   default_source_uuids: [uuid, ...]           (optional - preset camera filter)
- *   default_subject_refs: [ref, ...]            (optional - preset subject filter)
+ *   default_subject_refs: [ref, ...]            (optional - preset "Acting" filter)
+ *   default_target_refs: [ref, ...]             (optional - preset "Acted on" filter)
+ *   default_present_refs: [ref, ...]            (optional - preset "Present" filter:
+ *     labels catalogued anywhere inside a clip, whether or not a rule cared)
  *   default_rule_uuids: [uuid, ...]             (optional - preset event-type filter)
  *   default_range: 'today'|'7d'|'30d'|'all'     (optional, default '7d')
+ *   show_overlay: <bool>                        (optional, default true - whether the
+ *     detection-box overlay starts on in the clip viewer. A viewer's own toggle
+ *     overrides it for that browser from then on; see OVERLAY_PREF_KEY)
  *   max_height: <number>                        (optional, default 480 - the grid
  *     and timeline scroll internally past this height in px, rather than growing the
  *     card without bound and pushing everything below it off the dashboard)
@@ -29,9 +35,47 @@
  */
 
 import { errorText } from './purrview-errors.js';
+import { attachClipOverlay, CLIP_CONTROLS_CSS, parseOverlay } from './purrview-clip-overlay.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PAGE_SIZE = 60;
+
+//: Where a viewer's own overlay on/off choice is remembered. Per browser, not per card
+//: and not in the card config: the config value is the dashboard author's default, and a
+//: viewer flipping the switch in a lightbox must not rewrite a shared dashboard. A
+//: stored choice therefore wins over `show_overlay` from then on.
+const OVERLAY_PREF_KEY = 'purrview-events-card:overlay';
+
+/** The viewer's remembered overlay choice, or `fallback` if they have never made one. */
+function overlayPreference(fallback) {
+  try {
+    const stored = window.localStorage?.getItem(OVERLAY_PREF_KEY);
+    if (stored === '0') return false;
+    if (stored === '1') return true;
+  } catch {
+    // Private mode, or storage denied for the origin. The default is a fine answer.
+  }
+  return fallback;
+}
+
+function rememberOverlayPreference(on) {
+  try {
+    window.localStorage?.setItem(OVERLAY_PREF_KEY, on ? '1' : '0');
+  } catch {
+    // Not worth surfacing: the switch still works for this lightbox.
+  }
+}
+
+//: labelUuid -> colour, for the clip overlay to draw each box in its label's own colour.
+//: The facets fetch already carries the whole label tree for the filter bar, so this
+//: costs no extra request; a label with no colour set falls back inside the renderer.
+function labelColourMap(labels) {
+  const colours = new Map();
+  for (const label of labels?.values?.() || []) {
+    if (label?.color) colours.set(label.uuid, label.color);
+  }
+  return colours;
+}
 
 //: Each option computes its own `startFrom` at click time, not at card-load time -
 //: a card left open across midnight must not keep serving yesterday's "Today".
@@ -52,6 +96,25 @@ const STYLE = `
   .title { font-size: 1.2em; font-weight: 500; padding: 0 4px 8px; }
   .filters {
     display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; align-items: center;
+  }
+  /* A <details>, not a button plus a hidden div: the disclosure, its keyboard handling
+     and its ARIA state come for free, and the open/closed state lives in the DOM rather
+     than in a field that would have to be re-applied on every re-render. */
+  .filter-box { flex: 1 1 100%; }
+  .filter-box > summary {
+    display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+    font-size: 0.85em; padding: 6px 8px; border-radius: 6px; width: fit-content;
+    border: 1px solid var(--divider-color); color: var(--primary-text-color);
+    /* The default marker is a disclosure triangle that sits outside the border box and
+       breaks the alignment with the selects beside it; ::after below replaces it. */
+    list-style: none;
+  }
+  .filter-box > summary::-webkit-details-marker { display: none; }
+  .filter-box > summary::after { content: '\\25be'; font-size: 0.9em; }
+  .filter-box[open] > summary::after { content: '\\25b4'; }
+  .filter-box > summary.active { border-color: var(--primary-color); color: var(--primary-color); }
+  .filter-box-body {
+    display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 0 2px;
   }
   .filters select, .filters input[type="date"] {
     font-size: 0.85em; padding: 6px 8px; border-radius: 6px;
@@ -154,6 +217,12 @@ const STYLE = `
   .lightbox-caption { padding: 10px 14px; font-size: 0.9em; color: var(--primary-text-color); display: flex; justify-content: space-between; align-items: center; }
   .lightbox-close { cursor: pointer; background: none; border: none; font-size: 1.3em; color: var(--primary-text-color); }
   .lightbox-actions { padding: 0 14px 12px; display: flex; justify-content: flex-end; gap: 8px; }
+  /* margin-right:auto rather than a second flex container: the overlay switch is a view
+     control, not an action, so it sits at the far left of the same row the actions end. */
+  .overlay-toggle {
+    margin-right: auto; display: flex; align-items: center; gap: 6px;
+    font-size: 0.8em; color: var(--primary-text-color); cursor: pointer;
+  }
   .flag-btn {
     font-size: 0.8em; padding: 6px 10px; border-radius: 6px; cursor: pointer;
     border: 1px solid var(--divider-color); background: transparent; color: var(--primary-text-color);
@@ -351,8 +420,31 @@ const THUMB_LOADER = '__purrviewThumbLoad';
 
 //: Which filter fields hold *label* refs, and where each one's "include child
 //: labels" toggle lives in the filter state. A camera and a rule are flat entities;
-//: a subject ref is (usually) a label uuid, and labels are a tree.
-const HIERARCHY_FIELDS = { subject_refs: 'subject_include_children' };
+//: an acting/acted-on ref is (usually) a label uuid and a present ref always is, and
+//: labels are a tree.
+const HIERARCHY_FIELDS = {
+  subject_refs: 'subject_include_children',
+  target_refs: 'target_include_children',
+  present_refs: 'present_include_children',
+};
+
+//: Every label-ref filter field, in the order the bar draws them. The three
+//: label-valued ones are what the app calls Acting / Acted on / Present.
+const FILTER_FIELDS = ['source_uuids', 'subject_refs', 'target_refs', 'present_refs', 'rule_uuids'];
+
+//: `this._els` keys of the popovers, in bar order. One list rather than the same literal
+//: array repeated at each site - click-outside, "close the others", reset and the facets
+//: fetch all have to agree, and a filter missing from one of them fails silently.
+const MULTI_SELECT_KEYS = ['sourceSelect', 'subjectSelect', 'targetSelect', 'presentSelect', 'ruleSelect'];
+
+//: Which facet list populates each popover.
+const FACET_FOR_SELECT = {
+  sourceSelect: 'sources',
+  subjectSelect: 'subjects',
+  targetSelect: 'targets',
+  presentSelect: 'present',
+  ruleSelect: 'rules',
+};
 
 /**
  * One facet's refs arranged as the label tree, as `{ref, name, depth}` rows.
@@ -441,11 +533,15 @@ class PurrviewEventsCard extends HTMLElement {
     this._defaultFilters = {
       source_uuids: [...(config.default_source_uuids || [])],
       subject_refs: [...(config.default_subject_refs || [])],
+      target_refs: [...(config.default_target_refs || [])],
+      present_refs: [...(config.default_present_refs || [])],
       rule_uuids: [...(config.default_rule_uuids || [])],
       // A roll-up widens a selection rather than being one, so it is not a filter in
       // its own right - but it has to live here anyway, or "Reset filters" on a card
       // built for "any bowl" would come back meaning "at the Tupperware".
       subject_include_children: Boolean(config.default_subject_include_children),
+      target_include_children: Boolean(config.default_target_include_children),
+      present_include_children: Boolean(config.default_present_include_children),
       range: config.default_range || '7d',
       // null means "pinned or not" - not part of card config, just live filter state,
       // the same way review_state has no default_* config option either.
@@ -457,6 +553,13 @@ class PurrviewEventsCard extends HTMLElement {
     // case labelTreeItems leaves every ref flat, which is the old behaviour rather
     // than a blank dropdown.
     this._labels = new Map();
+    //: The dashboard author's default. A viewer's stored choice overrides it - see
+    //: overlayPreference - so this is read at lightbox-open time, not frozen here.
+    this._overlayDefault = config.show_overlay !== false;
+    //: The live clip overlay, while a lightbox holding a clip with boxes is open. It owns
+    //: event listeners, a ResizeObserver and a requestVideoFrameCallback loop, all of
+    //: which outlive the nodes they draw on unless _closeLightbox destroys it.
+    this._overlay = null;
     this._events = [];
     this._total = 0;
     this._view = 'grid';
@@ -519,7 +622,9 @@ class PurrviewEventsCard extends HTMLElement {
   _build() {
     const root = this.attachShadow({ mode: 'open' });
     const style = document.createElement('style');
-    style.textContent = STYLE;
+    // Appended, not merged into STYLE: the clip player's rules belong to the overlay
+    // module, and a shadow root sees no stylesheet the module could ship on its own.
+    style.textContent = STYLE + CLIP_CONTROLS_CSS;
 
     const card = document.createElement('ha-card');
 
@@ -532,7 +637,15 @@ class PurrviewEventsCard extends HTMLElement {
     filters.className = 'filters';
 
     const sourceSelect = this._makeMultiSelect('source_uuids', 'Camera');
-    const subjectSelect = this._makeMultiSelect('subject_refs', 'Subject');
+    // The app's own words for these three (nvr/events/filters.js FACET_FILTERS), so a
+    // household reading both UIs does not have to learn two vocabularies. "Acting" is
+    // what this card used to call "Subject".
+    const subjectSelect = this._makeMultiSelect('subject_refs', 'Acting');
+    const targetSelect = this._makeMultiSelect('target_refs', 'Acted on');
+    // Not an actor slot: what the clip *contains* at any point, whether or not the rule
+    // cared. The only facet backed by a one-to-many table, so it is also the only one an
+    // event can have none of.
+    const presentSelect = this._makeMultiSelect('present_refs', 'Present');
     const ruleSelect = this._makeMultiSelect('rule_uuids', 'Event type');
     const rangeSelect = document.createElement('select');
     for (const opt of RANGE_OPTIONS) {
@@ -579,6 +692,7 @@ class PurrviewEventsCard extends HTMLElement {
     pinnedSelect.value = this._filters.pinned == null ? '' : String(this._filters.pinned);
     pinnedSelect.addEventListener('change', () => {
       this._filters.pinned = pinnedSelect.value === '' ? null : pinnedSelect.value === 'true';
+      this._renderFilterSummary();
       this._clearDrillDown();
       this._reload();
     });
@@ -588,7 +702,19 @@ class PurrviewEventsCard extends HTMLElement {
     reset.textContent = 'Reset filters';
     reset.addEventListener('click', () => this._resetFilters());
 
-    filters.append(sourceSelect, subjectSelect, ruleSelect, rangeSelect, customStart, customEnd, pinnedSelect, reset);
+    // Date range stays on the face of the card - it is the one control that gets
+    // touched on nearly every visit. The five facet popovers and the pin filter fold
+    // away: five dropdowns in a row is more than a phone-width dashboard can show, and
+    // most visits use none of them.
+    const filterBox = document.createElement('details');
+    filterBox.className = 'filter-box';
+    const filterSummary = document.createElement('summary');
+    const filterBody = document.createElement('div');
+    filterBody.className = 'filter-box-body';
+    filterBody.append(sourceSelect, subjectSelect, targetSelect, presentSelect, ruleSelect, pinnedSelect, reset);
+    filterBox.append(filterSummary, filterBody);
+
+    filters.append(rangeSelect, customStart, customEnd, filterBox);
 
     const views = document.createElement('div');
     views.className = 'views';
@@ -640,11 +766,14 @@ class PurrviewEventsCard extends HTMLElement {
       title,
       sourceSelect,
       subjectSelect,
+      targetSelect,
+      presentSelect,
       ruleSelect,
       rangeSelect,
       customStart,
       customEnd,
       pinnedSelect,
+      filterSummary,
       status,
       gridWrap,
       grid,
@@ -660,10 +789,10 @@ class PurrviewEventsCard extends HTMLElement {
     // listener, since the popovers aren't <dialog>/mwc elements with their own
     // light-dismiss behavior.
     root.addEventListener('click', (ev) => {
-      if (!ev.composedPath().some((el) => el === this._els.sourceSelect || el === this._els.subjectSelect || el === this._els.ruleSelect)) {
-        this._closeMultiSelects();
-      }
+      const popovers = MULTI_SELECT_KEYS.map((key) => this._els[key]);
+      if (!ev.composedPath().some((el) => popovers.includes(el))) this._closeMultiSelects();
     });
+    this._renderFilterSummary();
     this._setView('grid');
   }
 
@@ -705,7 +834,7 @@ class PurrviewEventsCard extends HTMLElement {
   //: exactly one document-level listener, registered once in _build) and for "only
   //: one open at a time" when a second button is clicked while another is open.
   _closeMultiSelects() {
-    for (const key of ['sourceSelect', 'subjectSelect', 'ruleSelect']) {
+    for (const key of MULTI_SELECT_KEYS) {
       this._els[key]._menu.hidden = true;
     }
   }
@@ -772,6 +901,25 @@ class PurrviewEventsCard extends HTMLElement {
     const count = (this._filters[wrap._field] || []).length;
     wrap._button.textContent = count ? `${wrap._label} (${count})` : wrap._label;
     wrap._button.classList.toggle('active', count > 0);
+    this._renderFilterSummary();
+  }
+
+  /**
+   * The collapsed box's own label.
+   *
+   * It carries the count because the box hides its contents by default: without it a
+   * card showing nothing looks broken, when in fact a filter the viewer cannot see is
+   * excluding everything. Counts the facets that are narrowing the query, so a
+   * card-configured default shows as active too - it is narrowing the results whether
+   * or not this viewer chose it.
+   */
+  _renderFilterSummary() {
+    const summary = this._els?.filterSummary;
+    if (!summary) return;
+    let active = FILTER_FIELDS.filter((field) => (this._filters[field] || []).length).length;
+    if (this._filters.pinned != null) active += 1;
+    summary.textContent = active ? `Filters (${active})` : 'Filters';
+    summary.classList.toggle('active', active > 0);
   }
 
   //: Re-syncs a popover's checkboxes and button label to whatever
@@ -790,13 +938,14 @@ class PurrviewEventsCard extends HTMLElement {
     // Returns to the card's configured defaults, not to nothing - a dashboard built
     // for one cat should snap back to that cat on reset, not show every camera.
     this._filters = { ...this._defaultFilters };
-    for (const key of ['sourceSelect', 'subjectSelect', 'ruleSelect']) this._syncMultiSelect(this._els[key]);
+    for (const key of MULTI_SELECT_KEYS) this._syncMultiSelect(this._els[key]);
     this._els.rangeSelect.value = this._filters.range;
     this._els.customStart.value = '';
     this._els.customStart.hidden = this._filters.range !== 'custom';
     this._els.customEnd.value = '';
     this._els.customEnd.hidden = this._filters.range !== 'custom';
     this._els.pinnedSelect.value = this._filters.pinned == null ? '' : String(this._filters.pinned);
+    this._renderFilterSummary();
     this._clearDrillDown();
     this._reload();
   }
@@ -827,7 +976,7 @@ class PurrviewEventsCard extends HTMLElement {
 
   _filterParams() {
     const params = new URLSearchParams();
-    for (const field of ['source_uuids', 'subject_refs', 'rule_uuids']) {
+    for (const field of FILTER_FIELDS) {
       const refs = this._filters[field] || [];
       // Expanded here rather than written back into `_filters`: the state is what the
       // dropdown renders, so storing the closure would tick five bowls for one click.
@@ -854,11 +1003,12 @@ class PurrviewEventsCard extends HTMLElement {
   async _loadFacets() {
     try {
       const facets = await this._hass.callApi('GET', `purrview/${this._config.entry_id}/event-facets`);
-      // Before the options are rendered: the Subject rows are drawn against this tree.
+      // Before the options are rendered: the label-valued rows are drawn against this
+      // tree, and so are the overlay's box colours.
       this._labels = new Map((facets?.labels || []).map((l) => [l.uuid, l]));
-      this._renderMultiSelectOptions(this._els.sourceSelect, facets?.sources || []);
-      this._renderMultiSelectOptions(this._els.subjectSelect, facets?.subjects || []);
-      this._renderMultiSelectOptions(this._els.ruleSelect, facets?.rules || []);
+      for (const key of MULTI_SELECT_KEYS) {
+        this._renderMultiSelectOptions(this._els[key], facets?.[FACET_FOR_SELECT[key]] || []);
+      }
       // The event payload itself carries ruleName but only sourceUuid, not a camera
       // name (WatchEventRead has no source_name field) - facets is the only place
       // that name lives, so the tile caption looks it up from here.
@@ -1331,6 +1481,7 @@ class PurrviewEventsCard extends HTMLElement {
     const inner = document.createElement('div');
     inner.className = 'lightbox-inner';
 
+    let video = null;
     const recordingUuid = playableRecording(event)?.uuid || null;
     if (recordingUuid) {
       // 300s, not the grid thumbnail's 60s - a clip can run longer than that between
@@ -1342,7 +1493,7 @@ class PurrviewEventsCard extends HTMLElement {
         300
       );
       if (signed && token === this._lightboxToken) {
-        const video = document.createElement('video');
+        video = document.createElement('video');
         video.controls = true;
         // Browsers block non-muted autoplay outright.
         video.muted = true;
@@ -1383,6 +1534,62 @@ class PurrviewEventsCard extends HTMLElement {
 
     lightbox.appendChild(inner);
     lightbox.hidden = false;
+
+    // After the lightbox is on screen, not before: the overlay canvas is sized from the
+    // video's laid-out box, and a video still in a detached subtree measures 0x0.
+    if (video) await this._attachOverlay(video, recordingUuid, actions, token);
+  }
+
+  /**
+   * Fetch a clip's detection sidecar and, if it has one, draw it over the video.
+   *
+   * A clip with no sidecar is the ordinary case - clips recorded before overlays
+   * existed have none, the recording action's overlay box can be off, and a
+   * chunk-assembled clip is deliberately given none - so a 404 adds no switch and says
+   * nothing on screen. There is no overlay to offer, which is different from one that
+   * is turned off.
+   */
+  async _attachOverlay(video, recordingUuid, actions, token) {
+    let doc = null;
+    try {
+      doc = parseOverlay(
+        await this._hass.callApi('GET', `purrview/${this._config.entry_id}/recordings/${recordingUuid}/overlay`)
+      );
+    } catch (err) {
+      // Either way the clip still plays: a lightbox that fails to open over a few tens
+      // of KB of JSON would be a worse outcome than one with no boxes. But only a 404 is
+      // *expected* - anything else is the integration or PurrView being wrong, and
+      // swallowing it silently once cost an evening of "where are the boxes", since a
+      // failed fetch also means no switch appears to hint that there should be one.
+      if (err?.status_code !== 404) {
+        console.warn('purrview-events-card: could not load the detection overlay', err);
+      }
+      return;
+    }
+    // The await above outlives a viewer who already closed this lightbox or opened the
+    // next one, and the nodes below would then be attached to a dead subtree.
+    if (!doc || token !== this._lightboxToken) return;
+
+    const on = overlayPreference(this._overlayDefault);
+    this._overlay = attachClipOverlay(video, doc, {
+      visible: on,
+      labelColours: labelColourMap(this._labels),
+      // `document.fullscreenElement` retargets to this card's host element, so the
+      // overlay cannot recognise its own video there; the shadow root can.
+      fullscreenRoot: this.shadowRoot ?? document,
+    });
+
+    const label = document.createElement('label');
+    label.className = 'overlay-toggle';
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = on;
+    box.addEventListener('change', () => {
+      this._overlay?.setVisible(box.checked);
+      rememberOverlayPreference(box.checked);
+    });
+    label.append(box, document.createTextNode('Detection boxes'));
+    actions.insertBefore(label, actions.firstChild);
   }
 
   //: purrview.pin_event toggles WatchEvent.pinned directly, so unlike flagging there
@@ -1460,6 +1667,11 @@ class PurrviewEventsCard extends HTMLElement {
   _closeLightbox() {
     this._lightboxToken = (this._lightboxToken || 0) + 1;
     const { lightbox } = this._els;
+    // Before the innerHTML wipe below: the overlay's listeners, ResizeObserver and
+    // requestVideoFrameCallback loop are held by the video and the document, not by the
+    // wrapper, so dropping the nodes alone would leave the loop redrawing forever.
+    this._overlay?.destroy();
+    this._overlay = null;
     const video = lightbox.querySelector('video');
     if (video) video.pause();
     lightbox.hidden = true;
@@ -1482,6 +1694,9 @@ const EDITOR_STYLE = `
   input[type="text"] { width: 100%; padding: 8px; font-size: 0.9em; border-radius: 4px; box-sizing: border-box; }
   select { padding: 8px; font-size: 0.9em; border-radius: 4px; }
   .picker-row { display: flex; flex-wrap: wrap; gap: 8px; }
+  /* Overrides the blanket \`label { display: block }\` above, which would otherwise put a
+     checkbox on its own line above its own text. */
+  label.inline { display: flex; align-items: center; gap: 6px; margin-bottom: 0; }
   .multiselect { position: relative; }
   .multiselect-btn {
     font-size: 0.85em; padding: 8px 10px; border-radius: 4px; cursor: pointer;
@@ -1590,7 +1805,7 @@ function buildEditorMultiSelect(label, getValues, setValues, hierarchy = null) {
 /**
  * Config editor for purrview-events-card: an entry picker (HA's generic
  * <ha-selector config_entry>, same shape purrview-card.js's editor uses), an
- * optional title field, and checkbox pickers for the three default_* filters plus a
+ * optional title field, and checkbox pickers for the five default_* filters plus a
  * default date range - so "a dashboard for one cat" is built by picking that cat
  * here, not by hand-typing its subject_ref into YAML.
  */
@@ -1654,7 +1869,7 @@ class PurrviewEventsCardEditor extends HTMLElement {
       (values) => this._updateConfig({ default_source_uuids: values.length ? values : undefined })
     );
     const subjectPicker = buildEditorMultiSelect(
-      'Subject',
+      'Acting',
       () => this._config?.default_subject_refs,
       (values) => this._updateConfig({ default_subject_refs: values.length ? values : undefined }),
       {
@@ -1664,12 +1879,30 @@ class PurrviewEventsCardEditor extends HTMLElement {
         setValue: (value) => this._updateConfig({ default_subject_include_children: value || undefined }),
       }
     );
+    const targetPicker = buildEditorMultiSelect(
+      'Acted on',
+      () => this._config?.default_target_refs,
+      (values) => this._updateConfig({ default_target_refs: values.length ? values : undefined }),
+      {
+        getValue: () => this._config?.default_target_include_children,
+        setValue: (value) => this._updateConfig({ default_target_include_children: value || undefined }),
+      }
+    );
+    const presentPicker = buildEditorMultiSelect(
+      'Present',
+      () => this._config?.default_present_refs,
+      (values) => this._updateConfig({ default_present_refs: values.length ? values : undefined }),
+      {
+        getValue: () => this._config?.default_present_include_children,
+        setValue: (value) => this._updateConfig({ default_present_include_children: value || undefined }),
+      }
+    );
     const rulePicker = buildEditorMultiSelect(
       'Event type',
       () => this._config?.default_rule_uuids,
       (values) => this._updateConfig({ default_rule_uuids: values.length ? values : undefined })
     );
-    pickerRow.append(sourcePicker, subjectPicker, rulePicker);
+    pickerRow.append(sourcePicker, subjectPicker, targetPicker, presentPicker, rulePicker);
     filtersRow.append(filtersLabel, pickerRow);
 
     const rangeRow = document.createElement('div');
@@ -1707,15 +1940,35 @@ class PurrviewEventsCardEditor extends HTMLElement {
     });
     maxHeightRow.append(maxHeightLabel, maxHeightInput);
 
-    root.append(style, entryRow, titleRow, filtersRow, rangeRow, maxHeightRow);
+    // The author's default only. A viewer who flips the switch in a clip keeps their own
+    // choice from then on (OVERLAY_PREF_KEY) - this does not override it.
+    const overlayRow = document.createElement('div');
+    overlayRow.className = 'row';
+    const overlayLabel = document.createElement('label');
+    overlayLabel.textContent = 'Clip viewer';
+    const overlayToggleLabel = document.createElement('label');
+    overlayToggleLabel.className = 'inline';
+    const overlayToggle = document.createElement('input');
+    overlayToggle.type = 'checkbox';
+    overlayToggle.addEventListener('change', () => {
+      // Written only when off: true is the default, and _updateConfig drops undefined,
+      // so a card nobody has touched this on keeps the YAML it had before.
+      this._updateConfig({ show_overlay: overlayToggle.checked ? undefined : false });
+    });
+    overlayToggleLabel.append(overlayToggle, document.createTextNode('Show detection boxes by default'));
+    overlayRow.append(overlayLabel, overlayToggleLabel);
+
+    root.append(style, entryRow, titleRow, filtersRow, rangeRow, maxHeightRow, overlayRow);
+    const pickers = [sourcePicker, subjectPicker, targetPicker, presentPicker, rulePicker];
     root.addEventListener('click', (ev) => {
-      if (!ev.composedPath().some((el) => el === sourcePicker || el === subjectPicker || el === rulePicker)) {
-        sourcePicker.closeMenu();
-        subjectPicker.closeMenu();
-        rulePicker.closeMenu();
+      if (!ev.composedPath().some((el) => pickers.includes(el))) {
+        for (const picker of pickers) picker.closeMenu();
       }
     });
-    this._els = { entrySelector, titleInput, sourcePicker, subjectPicker, rulePicker, rangeSelect, maxHeightInput };
+    this._els = {
+      entrySelector, titleInput, rangeSelect, maxHeightInput, overlayToggle,
+      sourcePicker, subjectPicker, targetPicker, presentPicker, rulePicker,
+    };
     this._built = true;
   }
 
@@ -1728,6 +1981,8 @@ class PurrviewEventsCardEditor extends HTMLElement {
       const labels = new Map((facets?.labels || []).map((l) => [l.uuid, l]));
       this._els.sourcePicker.renderOptions(facets?.sources || []);
       this._els.subjectPicker.renderOptions(facets?.subjects || [], labels);
+      this._els.targetPicker.renderOptions(facets?.targets || [], labels);
+      this._els.presentPicker.renderOptions(facets?.present || [], labels);
       this._els.rulePicker.renderOptions(facets?.rules || []);
     } catch {
       // Leave the pickers empty - a facets fetch failing (PurrView unreachable while
@@ -1744,6 +1999,7 @@ class PurrviewEventsCardEditor extends HTMLElement {
     if (document.activeElement !== this._els.maxHeightInput) {
       this._els.maxHeightInput.value = this._config?.max_height || '';
     }
+    this._els.overlayToggle.checked = this._config?.show_overlay !== false;
   }
 
   _updateConfig(patch) {

@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import Any
 from urllib.parse import urlsplit
 
-from aiohttp import ClientSession
+from aiohttp import ClientResponseError, ClientSession
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -207,13 +207,16 @@ class PurrViewClient:
         return data
 
     async def get_facets(self) -> dict[str, list[dict[str, str]]]:
-        """`{rules, subjects, targets, sources}`, each a list of `{ref, name}`.
+        """`{rules, subjects, targets, sources, present}`, each a list of `{ref, name}`.
 
         Derived from event history, not config - a rule that has never fired will not
-        appear here yet. Documented behaviour, not a bug.
+        appear here yet. Documented behaviour, not a bug. `present` is narrower still:
+        a label only earns a row once it has been catalogued inside some clip's window
+        (the `watch_event_labels` table), so it can be missing for a label that exists
+        and has even acted in an event.
         """
         data = await self._request_json("GET", "/api/watch-events/facets")
-        return {key: data.get(key, []) for key in ("rules", "subjects", "targets", "sources")}
+        return {key: data.get(key, []) for key in ("rules", "subjects", "targets", "sources", "present")}
 
     async def list_labels(self) -> list[dict[str, Any]]:
         """The whole label tree, as `{uuid, name, color, parentUuid, ...}` rows.
@@ -304,6 +307,27 @@ class PurrViewClient:
         `metadata_json`, so there is nothing else on the row this could clobber.
         """
         await self._request_json("PATCH", f"/api/watch-events/{event_uuid}", json={"pinned": pinned})
+
+    async def get_recording_overlay(self, recording_uuid: str) -> dict[str, Any] | None:
+        """A clip's detection-overlay sidecar, or None if it has none.
+
+        Not the usual `{"status": ...}` envelope - this endpoint answers with the
+        sidecar document itself (`{version, frames, event, durationS, ...}`), so there
+        is nothing for `_request_json`'s envelope check to find and nothing to unwrap.
+
+        A clip without an overlay is the normal case, not an error: clips recorded
+        before the sidecar existed have none, the recording action's overlay checkbox
+        can be off, and a chunk-assembled clip is deliberately given none. PurrView
+        answers 404 for all of them (and for an unknown uuid), which `raise_for_status`
+        turns into a ClientResponseError - caught here so the card simply offers no
+        overlay toggle.
+        """
+        try:
+            return await self._request_json("GET", f"/api/recordings/{recording_uuid}/overlay")
+        except ClientResponseError as err:
+            if err.status == 404:
+                return None
+            raise
 
     async def list_watch_profiles(self) -> list[dict[str, Any]]:
         """Every configured watch profile, as `[{"uuid", "name", "enabled"}]`.

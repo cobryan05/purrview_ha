@@ -25,6 +25,7 @@ from .events import (
     PurrViewEventGroupsView,
     PurrViewEventHistogramView,
     PurrViewEventsView,
+    PurrViewRecordingOverlayView,
 )
 from .live_preview import PurrViewLivePreviewView
 from .proxy import PurrViewMediaProxyView
@@ -67,6 +68,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.http.register_view(PurrViewEventFacetsView(hass))
         hass.http.register_view(PurrViewEventGroupsView(hass))
         hass.http.register_view(PurrViewEventHistogramView(hass))
+        hass.http.register_view(PurrViewRecordingOverlayView(hass))
         # cache_headers=False: an unversioned URL that could otherwise leave a viewer
         # stuck on a stale card after an update until they hard-refresh.
         await hass.http.async_register_static_paths(
