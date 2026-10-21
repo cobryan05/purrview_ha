@@ -14,12 +14,9 @@ jobs:
 
       # HACS extracts the zip straight into config/custom_components/purrview,
       # so the component's contents must sit at the root of the archive.
-      # brand/ exists for a home-assistant/brands submission and is never read
-      # at runtime; dropping it halves the download.
       - name: Create release zip
         run: |
           cd custom_components/purrview
-          rm -rf brand
           zip -r ../../purrview.zip ./*
 
       - name: Upload release asset
