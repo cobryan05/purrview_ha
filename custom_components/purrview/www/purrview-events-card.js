@@ -35,7 +35,7 @@
  */
 
 import { errorText } from './purrview-errors.js';
-import { attachClipOverlay, parseOverlay } from './purrview-clip-overlay.js';
+import { attachClipOverlay, CLIP_CONTROLS_CSS, parseOverlay } from './purrview-clip-overlay.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PAGE_SIZE = 60;
@@ -622,7 +622,9 @@ class PurrviewEventsCard extends HTMLElement {
   _build() {
     const root = this.attachShadow({ mode: 'open' });
     const style = document.createElement('style');
-    style.textContent = STYLE;
+    // Appended, not merged into STYLE: the clip player's rules belong to the overlay
+    // module, and a shadow root sees no stylesheet the module could ship on its own.
+    style.textContent = STYLE + CLIP_CONTROLS_CSS;
 
     const card = document.createElement('ha-card');
 

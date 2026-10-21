@@ -9,10 +9,13 @@
  * letterbox math and the measured playback lead below are both easy to get subtly
  * wrong, and both are invisible when wrong in a way that looks like a bad detector.
  * No build step crosses the app/HACS boundary, so this is a copy; keep it in step by
- * hand. What is dropped relative to the source: the app's custom control bar (this
- * keeps the native one) and the "save frame for annotation" hook (HA does no
- * annotation, by design).
+ * hand. What is dropped relative to the source: the "save frame for annotation" hook,
+ * since HA does no annotation by design.
  */
+
+import { attachClipControls, CLIP_CONTROLS_CSS } from './purrview-clip-controls.js';
+
+export { CLIP_CONTROLS_CSS };
 
 /** Sidecar shapes this understands. v2 only added keys to each track; nothing moved. */
 const SUPPORTED_VERSIONS = new Set([1, 2]);
@@ -148,6 +151,24 @@ export function attachClipOverlay(video, doc, { visible = true, labelColours = n
   canvas.style.pointerEvents = 'none';
   wrapper.appendChild(canvas);
 
+  /**
+   * Fullscreen the wrapper, never the video.
+   *
+   * Only the fullscreen element's own subtree is painted, and the canvas is the video's
+   * sibling - fullscreening the video shows the picture with the boxes stripped off.
+   */
+  const toggleFullscreen = () => {
+    if (fullscreenRoot.fullscreenElement) document.exitFullscreen?.();
+    // Not awaited: a refusal should leave the player exactly as it was.
+    else wrapper.requestFullscreen?.().catch(() => {});
+  };
+
+  // Appended after the canvas, so the bar draws over the boxes rather than under them.
+  // It replaces the native controls outright: their fullscreen button takes the video
+  // element alone and strands this canvas, and the only recovery from that needs a user
+  // gesture a fullscreenchange handler does not have. See purrview-clip-controls.js.
+  const controls = attachClipControls(wrapper, video, { onToggleFullscreen: toggleFullscreen });
+
   let showing = visible;
   let lead = 0;
 
@@ -243,20 +264,47 @@ export function attachClipOverlay(video, doc, { visible = true, labelColours = n
   video.addEventListener('loadedmetadata', onMetadata);
   video.addEventListener('durationchange', onMetadata);
 
+  // Double-clicking a `<video>` is the browser's own shortcut for fullscreen, and it
+  // fullscreens the VIDEO ELEMENT - which leaves this canvas, its sibling, behind: the
+  // picture fills the screen and the boxes silently vanish. That is the one failure this
+  // wrapper exists to prevent, so the gesture is taken over here rather than left to
+  // whichever browser happens to implement it. Handled on the wrapper so the whole
+  // letterboxed area responds, not only the picture.
+  const onDoubleClick = (e) => {
+    // The control bar is inside the wrapper, so a double-tap on the scrubber or the play
+    // button would otherwise read as a double-click on the picture.
+    if (e.target.closest?.('.clip-controls')) return;
+    e.preventDefault();
+    toggleFullscreen();
+  };
+  wrapper.addEventListener('dblclick', onDoubleClick);
+
+  // Clicking the picture plays and pauses it, the way a native player does.
+  //
+  // Acted on immediately rather than held back to see whether a double-click follows:
+  // the two clicks inside one toggle playback twice and land back where they started, so
+  // the gesture costs nothing, where deferring every click would put a visible lag on
+  // the commonest thing anyone does to a video.
+  const onClick = (e) => {
+    if (e.target.closest?.('.clip-controls')) return;
+    controls.togglePlay();
+  };
+  wrapper.addEventListener('click', onClick);
+
   /**
    * Keep the canvas on screen when something fullscreens the video.
    *
-   * Only the fullscreen element's own subtree is painted, and the canvas is the video's
-   * *sibling* - so the native control bar's fullscreen button, and a browser's own
-   * double-click gesture, both show the picture with its boxes stripped off. The
-   * request is promoted to the wrapper, which is the video's ancestor, so the picture
-   * never leaves the screen on the way.
+   * A last-ditch guard, not the normal route: the native bar is gone and the
+   * double-click gesture is taken over above, so nothing in this player asks for
+   * video-element fullscreen any more. A browser can still do it unprompted, and the
+   * video alone on screen is the picture with its boxes stripped off - so the request is
+   * promoted to the wrapper, the video's own ancestor, and the picture never leaves the
+   * screen on the way.
    *
-   * Escalated rather than exited and re-entered: leaving fullscreen first spends the
-   * gesture that opened it, and the second request is then refused for want of
-   * transient activation. Gecko requires activation for every request and denies this
-   * one, where the only honest outcome left is no fullscreen at all - so a refusal
-   * exits, rather than leaving a picture missing its boxes.
+   * The promotion needs transient activation that a fullscreenchange handler does not
+   * have, and both Gecko and the Android WebView refuse it. Nothing better is available
+   * from here, so a refusal exits rather than leaving a picture missing its boxes - this
+   * is exactly why the gestures above exist instead of relying on this.
    */
   const onFullscreenChange = () => {
     if (fullscreenRoot.fullscreenElement === video) {
@@ -278,12 +326,15 @@ export function attachClipOverlay(video, doc, { visible = true, labelColours = n
     },
     redraw,
     destroy() {
+      controls.destroy();
       observer.disconnect();
       video.removeEventListener('timeupdate', redraw);
       video.removeEventListener('seeked', redraw);
       video.removeEventListener('loadedmetadata', onMetadata);
       video.removeEventListener('durationchange', onMetadata);
       document.removeEventListener('fullscreenchange', onFullscreenChange);
+      wrapper.removeEventListener('dblclick', onDoubleClick);
+      wrapper.removeEventListener('click', onClick);
       if (rafHandle != null && video.cancelVideoFrameCallback) video.cancelVideoFrameCallback(rafHandle);
       canvas.remove();
       // The video goes back where it was, so a caller holding a reference to it is not
