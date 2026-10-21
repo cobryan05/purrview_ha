@@ -19,7 +19,7 @@ from .api import PurrViewApiError, configured_clients
 #: `Query(None)`-typed list params one-for-one - forwarded as-is rather than
 #: collapsed to a single value, so the card can let a viewer pick more than one
 #: camera/subject/event type at once.
-_MULTI_FILTER_PARAMS = ("source_uuids", "rule_uuids", "subject_refs", "target_refs")
+_MULTI_FILTER_PARAMS = ("source_uuids", "rule_uuids", "subject_refs", "target_refs", "present_refs")
 
 #: Everything else the card is allowed to forward. Both of these are allowlists, not
 #: a passthrough of request.query - this view is reachable with only HA's own auth,
@@ -169,3 +169,35 @@ class PurrViewEventHistogramView(HomeAssistantView):
             raise web.HTTPBadGateway(reason=str(err)) from err
 
         return self.json({"bucket": resolved_bucket, "buckets": buckets})
+
+
+class PurrViewRecordingOverlayView(HomeAssistantView):
+    """`GET /api/purrview/{entry_id}/recording-overlay/{uuid}` -> the clip's sidecar.
+
+    JSON, so it belongs here rather than in proxy.py: that view streams Range-aware
+    bytes to a `<video>`/`<img>` element and has to be reachable with a signed URL
+    instead of a header, neither of which applies to a document the card fetches with
+    `callApi`.
+
+    404 means "this clip has no boxes", which is an ordinary answer - the card draws
+    the video and offers no overlay toggle.
+    """
+
+    url = "/api/purrview/{entry_id}/recording-overlay/{uuid}"
+    name = "api:purrview:recording-overlay"
+    requires_auth = True
+
+    def __init__(self, hass: HomeAssistant) -> None:
+        self._hass = hass
+
+    async def get(self, request: web.Request, entry_id: str, uuid: str) -> web.Response:
+        client = _client_or_404(self._hass, entry_id)
+
+        try:
+            doc = await client.get_recording_overlay(uuid)
+        except (PurrViewApiError, ClientError, TimeoutError) as err:
+            raise web.HTTPBadGateway(reason=str(err)) from err
+
+        if doc is None:
+            raise web.HTTPNotFound(reason="Recording has no overlay")
+        return self.json(doc)

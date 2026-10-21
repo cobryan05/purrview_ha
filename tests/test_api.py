@@ -57,6 +57,7 @@ class TestFacets:
         assert facets["subjects"] == []
         assert facets["targets"] == []
         assert facets["sources"] == []
+        assert facets["present"] == []
 
 
 class TestListLabels:
@@ -459,3 +460,31 @@ class TestTrailingSlashRedirect:
 
         with pytest.raises(PurrViewAuthError):
             await _client(hass).list_labels()
+
+
+class TestGetRecordingOverlay:
+    """The clip viewer's detection boxes. Unlike every other call here the response is
+    not PurrView's `{"status": ...}` envelope - it is the sidecar document itself."""
+
+    async def test_returns_the_sidecar_document(self, hass, aioclient_mock):
+        doc = {"version": 2, "durationS": 27.0, "partCount": 1, "frames": [{"t": 0.0, "boxes": []}]}
+        aioclient_mock.get(f"{BASE}/api/recordings/rec-1/overlay", json=doc)
+
+        assert await _client(hass).get_recording_overlay("rec-1") == doc
+
+    async def test_a_clip_without_an_overlay_is_none_not_an_error(self, hass, aioclient_mock):
+        """PurrView answers 404 for "no sidecar" as well as for "no such clip", and both
+        mean the same thing to the caller: play the video, offer no toggle."""
+        aioclient_mock.get(f"{BASE}/api/recordings/rec-1/overlay", status=404)
+
+        assert await _client(hass).get_recording_overlay("rec-1") is None
+
+    async def test_a_server_error_is_not_swallowed_as_no_overlay(self, hass, aioclient_mock):
+        """Only 404 means "this clip has none". Treating a 500 the same way would report
+        PurrView being broken as a clip that simply has no boxes."""
+        from aiohttp import ClientResponseError
+
+        aioclient_mock.get(f"{BASE}/api/recordings/rec-1/overlay", status=500)
+
+        with pytest.raises(ClientResponseError):
+            await _client(hass).get_recording_overlay("rec-1")

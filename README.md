@@ -39,12 +39,28 @@ driveway keeps triggering.
 `purrview-events-card` is two cards in one, and you flip between them with a
 button.
 
-The **grid** is a wall of event thumbnails, newest first. Filter by camera, by
-subject (the label tree, so picking a parent gets you everything under it), by
-event type, and by date range. Click one to play its clip or its timelapse. From
-there you can flag an event whose labels came out wrong, so you can fix them in
-the app later, and you can pin one you want to keep — a pinned event is safe from
-the retention cleanup and from the storage quota.
+The **grid** is a wall of event thumbnails, newest first. The date range sits on
+the face of the card; the rest fold into a **Filters** box that counts how many
+are narrowing the results, so a card showing nothing never leaves you guessing
+why. The same five the app itself offers: camera, **Acting**, **Acted on**,
+**Present**, and event type. The three label ones take the label tree, so picking
+a parent gets you everything under it.
+
+"Present" is the odd one and the useful one: it asks what the *clip* contains at
+any point, whether or not a rule cared. "Show me every clip with a cat in it" is a
+Present filter; "show me every clip where a cat did something" is an Acting one.
+
+Click a thumbnail to play its clip or its timelapse, with the detection boxes
+PurrView saw drawn over the video and a **Detection boxes** switch to turn them
+off. Nothing is burned into the video — the boxes are drawn live from the sidecar
+PurrView wrote beside the clip, so the switch is instant, your copy of the clip
+stays untouched, and flipping it is remembered for next time. A clip recorded
+before overlays existed, or with the overlay box unticked, simply plays without
+the switch.
+
+From there you can flag an event whose labels came out wrong, so you can fix them
+in the app later, and you can pin one you want to keep — a pinned event is safe
+from the retention cleanup and from the storage quota.
 
 The **timeline** is for the question the grid is bad at: *when* does this keep
 happening? One swimlane per camera/subject/event-type combination that actually
@@ -146,8 +162,11 @@ page_size: 60                          # optional
 max_height: 480                        # optional, px before the card scrolls internally
 default_range: 7d                      # optional: today | 7d | 30d | all
 default_source_uuids: []               # optional, preset camera filter
-default_subject_refs: []               # optional, preset subject filter
+default_subject_refs: []               # optional, preset "Acting" filter
+default_target_refs: []                # optional, preset "Acted on" filter
+default_present_refs: []               # optional, preset "Present" filter
 default_rule_uuids: []                 # optional, preset event-type filter
+show_overlay: true                     # optional, detection boxes on by default
 ```
 
 One useful detail about the `default_*` filters: they are also what the card's
