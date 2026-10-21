@@ -1,0 +1,28 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # HACS extracts the zip straight into config/custom_components/purrview,
+      # so the component's contents must sit at the root of the archive.
+      # brand/ exists for a home-assistant/brands submission and is never read
+      # at runtime; dropping it halves the download.
+      - name: Create release zip
+        run: |
+          cd custom_components/purrview
+          rm -rf brand
+          zip -r ../../purrview.zip ./*
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: purrview.zip
