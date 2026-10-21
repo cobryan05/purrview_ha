@@ -8,6 +8,10 @@ from homeassistant.setup import async_setup_component
 
 from custom_components.purrview.api import PurrViewClient
 from custom_components.purrview.const import DOMAIN
+#: The overlay view's path. One place, so a route change cannot leave half these
+#: tests passing against the old URL.
+OVERLAY_URL = "/api/purrview/entry-1/recordings/rec-1/overlay"
+
 from custom_components.purrview.events import (
     PurrViewEventFacetsView,
     PurrViewEventsView,
@@ -270,7 +274,7 @@ class TestRecordingOverlay:
         await _register(hass, overlay=doc)
         client = await hass_client()
 
-        resp = await client.get("/api/purrview/entry-1/recording-overlay/rec-1")
+        resp = await client.get(OVERLAY_URL)
 
         assert resp.status == 200
         assert await resp.json() == doc
@@ -283,7 +287,7 @@ class TestRecordingOverlay:
         await _register(hass, overlay=None)
         client = await hass_client()
 
-        resp = await client.get("/api/purrview/entry-1/recording-overlay/rec-1")
+        resp = await client.get(OVERLAY_URL)
 
         assert resp.status == 404
 
@@ -293,7 +297,7 @@ class TestRecordingOverlay:
         await _register(hass, overlay_side_effect=PurrViewApiError("db unavailable"))
         client = await hass_client()
 
-        resp = await client.get("/api/purrview/entry-1/recording-overlay/rec-1")
+        resp = await client.get(OVERLAY_URL)
 
         assert resp.status == 502
 
@@ -301,7 +305,7 @@ class TestRecordingOverlay:
         await _register(hass)
         client = await hass_client()
 
-        resp = await client.get("/api/purrview/no-such-entry/recording-overlay/rec-1")
+        resp = await client.get("/api/purrview/no-such-entry/recordings/rec-1/overlay")
 
         assert resp.status == 404
 
@@ -309,6 +313,29 @@ class TestRecordingOverlay:
         await _register(hass, overlay={"version": 2, "frames": []})
         client = await hass_client_no_auth()
 
-        resp = await client.get("/api/purrview/entry-1/recording-overlay/rec-1")
+        resp = await client.get(OVERLAY_URL)
 
         assert resp.status == 401
+
+    async def test_the_media_proxy_does_not_swallow_this_route(self, hass, hass_client):
+        """proxy.py owns `/api/purrview/{entry_id}/{kind}/{uuid}`, and aiohttp matches
+        dynamic resources in registration order - so any three-segment overlay path
+        would be claimed by the proxy as an unknown `kind` and 404 before this view ever
+        ran. Registered here in the same order __init__.py uses, because every other
+        test in this class registers the overlay view alone and cannot see the clash.
+        """
+        from custom_components.purrview.proxy import PurrViewMediaProxyView
+
+        doc = {"version": 2, "frames": []}
+        await async_setup_component(hass, "http", {})
+        client_mock = MagicMock(spec=PurrViewClient)
+        client_mock.get_recording_overlay = AsyncMock(return_value=doc)
+        hass.data[DOMAIN] = {"entry-1": client_mock}
+        hass.http.register_view(PurrViewMediaProxyView(hass))
+        hass.http.register_view(PurrViewRecordingOverlayView(hass))
+        client = await hass_client()
+
+        resp = await client.get(OVERLAY_URL)
+
+        assert resp.status == 200
+        assert await resp.json() == doc

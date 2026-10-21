@@ -1551,11 +1551,17 @@ class PurrviewEventsCard extends HTMLElement {
     let doc = null;
     try {
       doc = parseOverlay(
-        await this._hass.callApi('GET', `purrview/${this._config.entry_id}/recording-overlay/${recordingUuid}`)
+        await this._hass.callApi('GET', `purrview/${this._config.entry_id}/recordings/${recordingUuid}/overlay`)
       );
-    } catch {
-      // 404 (no sidecar) and a transport failure are the same outcome here: a clip that
-      // plays with no boxes beats a lightbox that fails to open over a few tens of KB.
+    } catch (err) {
+      // Either way the clip still plays: a lightbox that fails to open over a few tens
+      // of KB of JSON would be a worse outcome than one with no boxes. But only a 404 is
+      // *expected* - anything else is the integration or PurrView being wrong, and
+      // swallowing it silently once cost an evening of "where are the boxes", since a
+      // failed fetch also means no switch appears to hint that there should be one.
+      if (err?.status_code !== 404) {
+        console.warn('purrview-events-card: could not load the detection overlay', err);
+      }
       return;
     }
     // The await above outlives a viewer who already closed this lightbox or opened the

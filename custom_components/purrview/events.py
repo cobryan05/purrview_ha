@@ -172,18 +172,25 @@ class PurrViewEventHistogramView(HomeAssistantView):
 
 
 class PurrViewRecordingOverlayView(HomeAssistantView):
-    """`GET /api/purrview/{entry_id}/recording-overlay/{uuid}` -> the clip's sidecar.
+    """`GET /api/purrview/{entry_id}/recordings/{uuid}/overlay` -> the clip's sidecar.
 
     JSON, so it belongs here rather than in proxy.py: that view streams Range-aware
     bytes to a `<video>`/`<img>` element and has to be reachable with a signed URL
     instead of a header, neither of which applies to a document the card fetches with
     `callApi`.
 
+    ⚠️ The path has four segments after the domain prefix, and must keep them.
+    proxy.py's view is `/api/purrview/{entry_id}/{kind}/{uuid}` and is registered
+    first, and aiohttp matches dynamic resources in registration order - so a
+    three-segment path here (`.../recording-overlay/{uuid}`) is claimed by the proxy as
+    an unknown `kind` and 404s before this view runs. Covered by
+    test_the_media_proxy_does_not_swallow_this_route.
+
     404 means "this clip has no boxes", which is an ordinary answer - the card draws
     the video and offers no overlay toggle.
     """
 
-    url = "/api/purrview/{entry_id}/recording-overlay/{uuid}"
+    url = "/api/purrview/{entry_id}/recordings/{uuid}/overlay"
     name = "api:purrview:recording-overlay"
     requires_auth = True
 
