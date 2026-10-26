@@ -27,6 +27,12 @@ This integration is the missing half. It brings the pictures over:
 No YAML required, and nothing to add to your dashboard resources list — the cards
 install themselves when you add the integration.
 
+<p align="center">
+  <img src="docs/screenshots/home-assistant.webp"
+       alt="The PurrView events card in a Home Assistant dashboard, between PurrView's MQTT entities"
+       width="400">
+</p>
+
 ## What you get
 
 ### Live view card
