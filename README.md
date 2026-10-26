@@ -1,7 +1,4 @@
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="custom_components/purrview/brand/dark_logo.png">
-  <img src="custom_components/purrview/brand/logo.png" alt="PurrView" width="454">
-</picture>
+<img src="https://raw.githubusercontent.com/cobryan05/purrview_ha/main/custom_components/purrview/brand/icon.png" alt="PurrView" width="128">
 
 # PurrView for Home Assistant
 
@@ -28,7 +25,7 @@ No YAML required, and nothing to add to your dashboard resources list — the ca
 install themselves when you add the integration.
 
 <p align="center">
-  <img src="docs/screenshots/home-assistant.webp"
+  <img src="https://raw.githubusercontent.com/cobryan05/purrview_ha/main/docs/screenshots/home-assistant.webp"
        alt="The PurrView events card in a Home Assistant dashboard, between PurrView's MQTT entities"
        width="400">
 </p>
