@@ -5,6 +5,9 @@
 
 # PurrView for Home Assistant
 
+[![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://github.com/hacs/integration)
+[![GitHub Release](https://img.shields.io/github/v/release/cobryan05/purrview_ha)](https://github.com/cobryan05/purrview_ha/releases)
+
 [PurrView](https://github.com/cobryan05/purrview) watches your cameras, detects
 and tracks the things you told it to care about, and records a clip when one of
 your rules fires. It already pushes sensors, switches and event entities into
@@ -23,6 +26,12 @@ This integration is the missing half. It brings the pictures over:
 
 No YAML required, and nothing to add to your dashboard resources list — the cards
 install themselves when you add the integration.
+
+<p align="center">
+  <img src="docs/screenshots/home-assistant.webp"
+       alt="The PurrView events card in a Home Assistant dashboard, between PurrView's MQTT entities"
+       width="400">
+</p>
 
 ## What you get
 
@@ -111,14 +120,17 @@ You need:
 
 ## Installation
 
-It is fully compatible with HACS.
+PurrView is in the HACS default store, so there is no custom repository to add.
 
-1. HACS → Integrations → ⋮ → **Custom repositories**.
-2. Add `https://github.com/cobryan05/purrview_ha` with the category
-   **Integration**.
-3. Install **PurrView**, then restart Home Assistant.
-4. Settings → Devices & Services → **Add Integration** → search for *PurrView*.
-5. Enter the host, port and API token.
+[![Open your Home Assistant instance and open this repository in HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=cobryan05&repository=purrview_ha&category=integration)
+
+1. In HACS, search for **PurrView** (or use the button above) and install it.
+2. Restart Home Assistant.
+3. Settings → Devices & Services → **Add Integration** → search for *PurrView*.
+4. Enter the host, port and API token.
+
+> Added it as a custom repository before it was listed? Remove the custom
+> repository entry in HACS; the installed integration carries on as it is.
 
 Then go to a dashboard, hit **Add card**, and search for PurrView. Both cards are
 already in the picker.
