@@ -45,10 +45,11 @@ export function boxColour(item, fallback) {
   return isDrawableColour(item?.labelColor) ? item.labelColor.trim() : fallback;
 }
 
-export function drawBox(ctx, bbox, colour, label, { dashed = false, emphasis = false, lineWidth = 2, fontPx = 12, glow = null } = {}) {
+export function drawBox(ctx, bbox, colour, label, { dashed = false, emphasis = false, lineWidth = 2, fontPx = 12, glow = null, faded = false } = {}) {
   if (!ctx || !bbox || bbox.length !== 4) return;
   const [x1, y1, x2, y2] = bbox;
   ctx.save();
+  if (faded) ctx.globalAlpha = 0.35;
   ctx.strokeStyle = colour;
   ctx.lineWidth = emphasis ? lineWidth * 2 : lineWidth;
   if (emphasis || glow) {

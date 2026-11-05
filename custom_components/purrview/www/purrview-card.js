@@ -416,6 +416,8 @@ class PurrviewCard extends HTMLElement {
         drawBox(ctx, scaleBox(track.bbox, k), colour, this._show.labels ? caption : null, {
           emphasis: active,
           glow: active || track.isAnchor ? status : null,
+          // Unmatched this frame: PurrView keeps drawing it where it was last seen until its TTL runs out.
+          faded: track.coasting === true,
           ...pen,
         });
       }
